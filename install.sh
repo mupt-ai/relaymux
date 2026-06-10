@@ -96,5 +96,5 @@ If needed, add this to your shell profile:
 
 Try:
   relaymux --version
-  relaymux init --imsg
+  relaymux setup
 EOF

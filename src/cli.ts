@@ -32,6 +32,10 @@ export async function main(argv, io = defaultIo()) {
       return handleInit(parsed.flags, io);
     }
 
+    if (parsed.command === "setup") {
+      return handleSetup(parsed.flags, io);
+    }
+
     const configInfo = loadConfig({ configPath: parsed.flags.config, env: io.env });
     const stateDir = resolveStateDir(configInfo.config);
 
@@ -66,6 +70,39 @@ export async function main(argv, io = defaultIo()) {
     io.stderr.write(`relaymux: ${error.message}\n`);
     return 1;
   }
+}
+
+async function handleSetup(flags, io) {
+  const configPath = flags.config || defaultConfigPath(io.env);
+  let configInfo = loadConfig({ configPath, env: io.env });
+  const shouldInstallLaunchAgent = flags.launchAgent !== false;
+
+  if (!configInfo.exists || flags.force) {
+    await handleInit({
+      ...flags,
+      imsg: flags.imsg ?? true,
+      installLaunchAgent: shouldInstallLaunchAgent,
+    }, io);
+    configInfo = loadConfig({ configPath, env: io.env });
+  } else {
+    io.stdout.write(`Using existing config at ${configInfo.path}\n`);
+    if (shouldInstallLaunchAgent) {
+      installLaunchAgent({
+        flags: { load: flags.load },
+        configInfo,
+        binPath: process.argv[1],
+        io,
+      });
+    }
+  }
+
+  const status = handleDoctor(configInfo, io);
+  if (status === 0) {
+    io.stdout.write("Setup complete. relaymux is ready.\n");
+  } else {
+    io.stderr.write("Setup completed, but doctor found missing requirements. Fix the missing checks above and re-run `relaymux doctor`.\n");
+  }
+  return status;
 }
 
 async function handleInit(flags, io) {
@@ -349,6 +386,7 @@ function helpText() {
   return `relaymux - run local coding agents in tmux
 
 Usage:
+  relaymux setup [--imsg] [--chat-id <id>] [--no-launch-agent]
   relaymux init [--force] [--config <path>]
   relaymux init --imsg [--chat-id <id>] [--install-launch-agent]
   relaymux daemon [--once]
@@ -359,12 +397,13 @@ Usage:
   relaymux notify [--run-id <id>] [--reply-mode imessage|none] [--message <text>]
   relaymux doctor
 
-Init options:
+Setup/init options:
   --imsg                    Create an imsg-based config and prompt for a chat when possible
   --chat-id <id>            Messages chat id/phone for imsg history/send
   --cwd <path>              Working directory for Pi and message commands
   --state-dir <path>        State/session/token directory
   --install-launch-agent    Install the LaunchAgent after writing config
+  --no-launch-agent         For setup: skip LaunchAgent installation
 
 Launch options:
   --prompt-file <path>       Read prompt from a file

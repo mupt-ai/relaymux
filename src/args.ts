@@ -9,6 +9,7 @@ const BOOLEAN_FLAGS = new Set([
   "imsg",
   "install-launch-agent",
   "json",
+  "launch-agent",
   "once",
   "print-command",
   "version",

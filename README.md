@@ -10,19 +10,21 @@ Install with the standalone shell installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/avyayv/relaymux/main/install.sh | bash
-relaymux init --imsg
+relaymux setup
 ```
 
 Or from this checkout:
 
 ```bash
 ./install.sh
-relaymux init --imsg
+relaymux setup
 ```
 
 The installer builds relaymux locally and writes a shim to `~/.local/bin/relaymux`. It requires `node`, the project build tooling, and `git` when installing via curl.
 
-The imsg setup finds your local `imsg` and `pi` commands, prompts for the Messages chat to use, and writes:
+`relaymux setup` finds your local `imsg` and `pi` commands, prompts for the Messages chat to use, writes the config, installs the macOS LaunchAgent, and runs `relaymux doctor`.
+
+It writes:
 
 ```text
 ~/.config/relaymux/config.json
@@ -31,20 +33,20 @@ The imsg setup finds your local `imsg` and `pi` commands, prompts for the Messag
 If you already know the chat id, skip the prompt:
 
 ```bash
-relaymux init --imsg --chat-id 1
+relaymux setup --chat-id 1
 ```
 
 `imsg` is the built-in preset. You can still edit the config later to use a different message CLI, as long as receive prints JSON/JSONL messages and send accepts `{text}`.
 
 ## Run it
 
-Check your setup:
+Check your setup any time:
 
 ```bash
 relaymux doctor
 ```
 
-Run the daemon in the foreground:
+If you skipped the LaunchAgent with `relaymux setup --no-launch-agent`, run the daemon in the foreground:
 
 ```bash
 relaymux daemon
