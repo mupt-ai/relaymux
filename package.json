@@ -1,23 +1,13 @@
 {
-  "name": "agentmux",
+  "name": "relaymux",
   "version": "0.1.0",
   "description": "Talk to a local Pi orchestrator over iMessage/SMS and delegate coding agents into tmux tabs.",
   "type": "module",
-  "bin": {
-    "agentmux": "./dist/bin/agentmux.js"
-  },
-  "files": [
-    "dist",
-    "examples",
-    "README.md",
-    "LICENSE"
-  ],
   "scripts": {
-    "build": "tsc && node -e \"require('fs').chmodSync('dist/bin/agentmux.js', 0o755)\"",
+    "build": "tsc && node -e \"require('fs').chmodSync('dist/bin/relaymux.js', 0o755)\"",
     "lint": "tsc --noEmit",
     "test": "tsx --test test/*.test.ts",
-    "prepack": "npm run build",
-    "validate": "npm run lint && npm test && npm run build && npm pack --dry-run"
+    "validate": "npm run lint && npm test && npm run build"
   },
   "keywords": [
     "agents",
@@ -32,12 +22,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/avyayv/agentmux.git"
+    "url": "git+https://github.com/avyayv/relaymux.git"
   },
   "bugs": {
-    "url": "https://github.com/avyayv/agentmux/issues"
+    "url": "https://github.com/avyayv/relaymux/issues"
   },
-  "homepage": "https://github.com/avyayv/agentmux#readme",
+  "homepage": "https://github.com/avyayv/relaymux#readme",
   "devDependencies": {
     "@types/node": "^25.9.2",
     "tsx": "^4.22.4",

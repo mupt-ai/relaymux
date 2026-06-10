@@ -45,7 +45,7 @@ export function buildFullPrompt({ config, configPath, title, body }) {
   const runtime = buildRuntimePromptContext({
     configPath,
     session: config.session || "agents",
-    tokenFile: expandPath(daemon.tokenFile || "~/.local/state/agentmux/webhook-token"),
+    tokenFile: expandPath(daemon.tokenFile || "~/.local/state/relaymux/webhook-token"),
     webhookUrl,
   });
 
@@ -61,7 +61,7 @@ export async function runOrchestrator(config, { prompt, stateDir, configPath, re
     promptFile,
     configPath,
     session: config.session || "agents",
-    tokenFile: expandPath(config.daemon?.tokenFile || "~/.local/state/agentmux/webhook-token"),
+    tokenFile: expandPath(config.daemon?.tokenFile || "~/.local/state/relaymux/webhook-token"),
     webhookPort: Number(config.daemon?.port || 47761),
     webhookHost: config.daemon?.host || "127.0.0.1",
     repo: cwd,
@@ -76,8 +76,8 @@ export async function runOrchestrator(config, { prompt, stateDir, configPath, re
     env: {
       ...process.env,
       ...invocation.env,
-      AGENTMUX_CONFIG: configPath,
-      AGENTMUX_ORCHESTRATOR: "1",
+      RELAYMUX_CONFIG: configPath,
+      RELAYMUX_ORCHESTRATOR: "1",
     },
     input,
     timeoutMs: Number(orchestrator.timeoutMs || 0),

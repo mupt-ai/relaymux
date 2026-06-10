@@ -5,7 +5,7 @@ import path from "node:path";
 import { expandPath } from "./paths.js";
 
 export function defaultConfig() {
-  const stateDir = "~/.local/state/agentmux";
+  const stateDir = "~/.local/state/relaymux";
   const tokenFile = `${stateDir}/webhook-token`;
 
   return {
@@ -44,7 +44,7 @@ export function defaultConfig() {
       port: 47761,
       tokenFile,
       maxBodyBytes: 65536,
-      launchAgentLabel: "com.agentmux.daemon",
+      launchAgentLabel: "com.relaymux.daemon",
       logDir: `${stateDir}/logs`,
     },
     orchestrator: {
@@ -75,7 +75,7 @@ export function defaultConfig() {
       },
       custom: {
         description: "A simple placeholder command for testing custom agent wiring.",
-        command: ["sh", "-lc", "printf '%s\\n' \"$AGENTMUX_PROMPT\""],
+        command: ["sh", "-lc", "printf '%s\\n' \"$RELAYMUX_PROMPT\""],
         promptMode: "env",
       },
     },
@@ -95,7 +95,7 @@ export function defaultConfig() {
 
 export function defaultConfigPath(env = process.env) {
   const base = env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-  return path.join(base, "agentmux", "config.json");
+  return path.join(base, "relaymux", "config.json");
 }
 
 export function loadConfig({ configPath, env = process.env }: any = {}) {

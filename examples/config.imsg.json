@@ -1,7 +1,7 @@
 {
   "version": 1,
   "session": "agents",
-  "stateDir": "~/.local/state/agentmux",
+  "stateDir": "~/.local/state/relaymux",
   "imessage": {
     "chatId": "CHAT_ID_OR_PHONE",
     "recipient": "+15555550123",
@@ -29,10 +29,10 @@
     "enabled": true,
     "host": "127.0.0.1",
     "port": 47761,
-    "tokenFile": "~/.local/state/agentmux/webhook-token",
+    "tokenFile": "~/.local/state/relaymux/webhook-token",
     "maxBodyBytes": 65536,
-    "launchAgentLabel": "com.agentmux.daemon",
-    "logDir": "~/.local/state/agentmux/logs"
+    "launchAgentLabel": "com.relaymux.daemon",
+    "logDir": "~/.local/state/relaymux/logs"
   },
   "orchestrator": {
     "cwd": "~",

@@ -7,7 +7,7 @@ import test from "node:test";
 import { loadConfig, writeDefaultConfig } from "../src/config.js";
 
 test("writeDefaultConfig creates a loadable config", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentmux-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-"));
   const configPath = path.join(dir, "config.json");
 
   writeDefaultConfig(configPath);
@@ -22,7 +22,7 @@ test("writeDefaultConfig creates a loadable config", () => {
 });
 
 test("loadConfig merges user agents with defaults", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentmux-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-"));
   const configPath = path.join(dir, "config.json");
   fs.writeFileSync(configPath, JSON.stringify({
     session: "review",

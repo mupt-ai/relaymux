@@ -8,7 +8,7 @@ test("buildImsgConfig creates usable imsg defaults", () => {
   const config = buildImsgConfig({
     chatId: "chat-1",
     cwd: "/tmp/project",
-    stateDir: "~/.state/agentmux-test",
+    stateDir: "~/.state/relaymux-test",
     imsgPath: "/usr/local/bin/imsg",
     piPath: "/usr/local/bin/pi",
     session: "work",
@@ -36,10 +36,10 @@ test("buildImsgConfig creates usable imsg defaults", () => {
     "--print",
     "--continue",
     "--session-dir",
-    "~/.state/agentmux-test/sessions",
+    "~/.state/relaymux-test/sessions",
     "{prompt}",
   ]);
-  assert.equal(config.daemon.tokenFile, "~/.state/agentmux-test/webhook-token");
+  assert.equal(config.daemon.tokenFile, "~/.state/relaymux-test/webhook-token");
   assert.equal(config.daemon.port, 49999);
 });
 

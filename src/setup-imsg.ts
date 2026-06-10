@@ -104,7 +104,7 @@ export async function resolveImsgChatId(flags: any, io: any, env = process.env) 
 
   if (isInteractive(io)) {
     if (chats.length) {
-      io.stdout.write("Choose the iMessage/SMS chat for agentmux:\n");
+      io.stdout.write("Choose the iMessage/SMS chat for relaymux:\n");
       for (const [index, chat] of chats.entries()) {
         io.stdout.write(`${index + 1}. ${formatChat(chat)}\n`);
       }

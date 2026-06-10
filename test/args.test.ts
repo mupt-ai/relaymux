@@ -28,10 +28,10 @@ test("parseArgv reports missing values", () => {
 });
 
 test("parseArgv supports global flags before the command", () => {
-  const parsed = parseArgv(["--config", "agentmux.json", "doctor"]);
+  const parsed = parseArgv(["--config", "relaymux.json", "doctor"]);
 
   assert.equal(parsed.command, "doctor");
   assert.deepEqual(parsed.flags, {
-    config: "agentmux.json",
+    config: "relaymux.json",
   });
 });

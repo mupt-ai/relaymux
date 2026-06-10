@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "session": "agentmux-mock",
-  "stateDir": "/tmp/agentmux-mock/state",
+  "session": "relaymux-mock",
+  "stateDir": "/tmp/relaymux-mock/state",
   "imessage": {
     "chatId": "mock-chat",
     "recipient": "+15555550123",
@@ -19,7 +19,7 @@
     "send": {
       "backend": "command",
       "command": {
-        "argv": ["sh", "-lc", "printf '%s\\n' \"$1\" >> /tmp/agentmux-mock/outbox.txt", "sh", "{text}"],
+        "argv": ["sh", "-lc", "printf '%s\\n' \"$1\" >> /tmp/relaymux-mock/outbox.txt", "sh", "{text}"],
         "cwd": "/tmp",
         "timeoutMs": 5000
       }
@@ -29,10 +29,10 @@
     "enabled": true,
     "host": "127.0.0.1",
     "port": 47762,
-    "tokenFile": "/tmp/agentmux-mock/webhook-token",
+    "tokenFile": "/tmp/relaymux-mock/webhook-token",
     "maxBodyBytes": 65536,
-    "launchAgentLabel": "com.agentmux.mock",
-    "logDir": "/tmp/agentmux-mock/logs"
+    "launchAgentLabel": "com.relaymux.mock",
+    "logDir": "/tmp/relaymux-mock/logs"
   },
   "orchestrator": {
     "cwd": "/tmp",
@@ -42,7 +42,7 @@
   },
   "agents": {
     "custom": {
-      "command": ["sh", "-lc", "printf 'mock subagent running: %s\\n' \"$AGENTMUX_PROMPT\""],
+      "command": ["sh", "-lc", "printf 'mock subagent running: %s\\n' \"$RELAYMUX_PROMPT\""],
       "promptMode": "env"
     }
   }

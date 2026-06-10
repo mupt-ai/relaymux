@@ -119,7 +119,7 @@ export async function sendMessage(config: any, text: string, io: any = process) 
 
   if (send.backend === "none" || send.enabled === false) {
     for (const chunk of chunks) {
-      io.stdout?.write?.(`[agentmux send disabled] ${chunk}\n`);
+      io.stdout?.write?.(`[relaymux send disabled] ${chunk}\n`);
     }
     return;
   }

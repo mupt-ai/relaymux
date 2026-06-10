@@ -7,7 +7,7 @@ import { formatHostForUrl, webhookConfig } from "./webhook.js";
 import { expandPath } from "./paths.js";
 
 export async function handleNotify({ flags, positionals, config, stateDir, io }) {
-  const runId = flags.runId || process.env.AGENTMUX_RUN_ID;
+  const runId = flags.runId || process.env.RELAYMUX_RUN_ID;
   const message = flags.message || flags.text || positionals.join(" ");
   const replyMode = flags.replyMode;
 
@@ -51,12 +51,12 @@ export async function dispatchNotifiers(config, event, io) {
   const command = config.notifier?.command;
   if (command?.enabled) {
     if (!Array.isArray(command.argv) || command.argv.length === 0) {
-      io.stderr.write("agentmux notify: command notifier enabled but argv is empty\n");
+      io.stderr.write("relaymux notify: command notifier enabled but argv is empty\n");
     } else {
       const argv = command.argv.map((part) => renderTemplate(part, eventTemplateContext(event)));
       const result = runCommand(argv[0], argv.slice(1), { allowFailure: true });
       if (result.status !== 0) {
-        io.stderr.write(`agentmux notify: command notifier failed with ${result.status}\n`);
+        io.stderr.write(`relaymux notify: command notifier failed with ${result.status}\n`);
       }
     }
   }
@@ -64,7 +64,7 @@ export async function dispatchNotifiers(config, event, io) {
   const webhook = config.notifier?.webhook;
   if (webhook?.enabled) {
     if (!webhook.url) {
-      io.stderr.write("agentmux notify: webhook notifier enabled but url is empty\n");
+      io.stderr.write("relaymux notify: webhook notifier enabled but url is empty\n");
       return;
     }
     try {
@@ -77,10 +77,10 @@ export async function dispatchNotifiers(config, event, io) {
         body: JSON.stringify(event),
       });
       if (!response.ok) {
-        io.stderr.write(`agentmux notify: webhook returned ${response.status}\n`);
+        io.stderr.write(`relaymux notify: webhook returned ${response.status}\n`);
       }
     } catch (error) {
-      io.stderr.write(`agentmux notify: webhook failed: ${error.message}\n`);
+      io.stderr.write(`relaymux notify: webhook failed: ${error.message}\n`);
     }
   }
 }

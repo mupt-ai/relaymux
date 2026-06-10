@@ -79,7 +79,7 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     } catch (error) {
       warn(`failed processing incoming ${job.ids.join(",")}:`, describeError(error));
       try {
-        await sendMessage(config, `agentmux orchestrator hit an error: ${error.message || String(error)}`, io);
+        await sendMessage(config, `relaymux orchestrator hit an error: ${error.message || String(error)}`, io);
       } catch (sendError) {
         warn("also failed to send error message:", describeError(sendError));
       }
@@ -104,7 +104,7 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
       warn(`failed processing local completion ${job.requestId}:`, describeError(error));
       if (job.replyMode === "imessage") {
         try {
-          await sendMessage(config, `agentmux orchestrator hit an error processing ${job.source}: ${error.message || String(error)}`, io);
+          await sendMessage(config, `relaymux orchestrator hit an error processing ${job.source}: ${error.message || String(error)}`, io);
         } catch (sendError) {
           warn("also failed to send completion error message:", describeError(sendError));
         }
@@ -139,7 +139,7 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     if (fresh.length) enqueueIncoming(fresh);
   }
 
-  log("starting agentmux iMessage orchestrator daemon");
+  log("starting relaymux iMessage orchestrator daemon");
   if (!state.initialized) {
     try {
       const recent = await receiveMessages(config);

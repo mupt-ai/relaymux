@@ -20,7 +20,7 @@ export async function main(argv, io = defaultIo()) {
   try {
     const parsed = parseArgv(argv);
     if (parsed.flags.version || parsed.command === "version") {
-      io.stdout.write("agentmux 0.1.0\n");
+      io.stdout.write("relaymux 0.1.0\n");
       return 0;
     }
     if (parsed.flags.help || parsed.command === "help") {
@@ -63,7 +63,7 @@ export async function main(argv, io = defaultIo()) {
         throw new Error(`Unknown command "${parsed.command}"`);
     }
   } catch (error) {
-    io.stderr.write(`agentmux: ${error.message}\n`);
+    io.stderr.write(`relaymux: ${error.message}\n`);
     return 1;
   }
 }
@@ -77,7 +77,7 @@ async function handleInit(flags, io) {
     }, io.env);
     const target = writeConfig(flags.config || defaultConfigPath(io.env), config, { force: Boolean(flags.force) });
     io.stdout.write(`Created ${target} with imsg defaults\n`);
-    io.stdout.write("Next: agentmux doctor && agentmux daemon\n");
+    io.stdout.write("Next: relaymux doctor && relaymux daemon\n");
     if (flags.installLaunchAgent) {
       installLaunchAgent({
         flags: { load: flags.load },
@@ -91,7 +91,7 @@ async function handleInit(flags, io) {
 
   const target = writeDefaultConfig(flags.config || defaultConfigPath(io.env), { force: Boolean(flags.force) });
   io.stdout.write(`Created ${target}\n`);
-  io.stdout.write("Tip: use `agentmux init --imsg` for an imsg-based setup wizard.\n");
+  io.stdout.write("Tip: use `relaymux init --imsg` for an imsg-based setup wizard.\n");
   return 0;
 }
 
@@ -173,12 +173,12 @@ function handleLaunch(flags, configInfo, stateDir, io) {
 
   const started = new Date().toISOString();
   setWindowMetadata(target.windowTarget, {
-    agentmux: "1",
-    agentmux_agent: agentName,
-    agentmux_name: name,
-    agentmux_repo: repo,
-    agentmux_run_id: runId,
-    agentmux_started: started,
+    relaymux: "1",
+    relaymux_agent: agentName,
+    relaymux_name: name,
+    relaymux_repo: repo,
+    relaymux_run_id: runId,
+    relaymux_started: started,
   });
   sendShellCommand(target.target, shellCommand);
 
@@ -241,7 +241,7 @@ function handleStatus(flags, configInfo, stateDir, io) {
   io.stdout.write(`Daemon: ${daemon.enabled ? "enabled" : "disabled"}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}; LaunchAgent ${daemon.launchAgentPath}\n`);
 
   if (rows.length === 0) {
-    io.stdout.write("No agentmux runs found.\n");
+    io.stdout.write("No relaymux runs found.\n");
     return 0;
   }
 
@@ -346,18 +346,18 @@ function defaultIo() {
 }
 
 function helpText() {
-  return `agentmux - run local coding agents in tmux
+  return `relaymux - run local coding agents in tmux
 
 Usage:
-  agentmux init [--force] [--config <path>]
-  agentmux init --imsg [--chat-id <id>] [--install-launch-agent]
-  agentmux daemon [--once]
-  agentmux install-launch-agent [--dry-run] [--no-load]
-  agentmux uninstall-launch-agent
-  agentmux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>]
-  agentmux status [--json] [--session <name>] [--all]
-  agentmux notify [--run-id <id>] [--reply-mode imessage|none] [--message <text>]
-  agentmux doctor
+  relaymux init [--force] [--config <path>]
+  relaymux init --imsg [--chat-id <id>] [--install-launch-agent]
+  relaymux daemon [--once]
+  relaymux install-launch-agent [--dry-run] [--no-load]
+  relaymux uninstall-launch-agent
+  relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>]
+  relaymux status [--json] [--session <name>] [--all]
+  relaymux notify [--run-id <id>] [--reply-mode imessage|none] [--message <text>]
+  relaymux doctor
 
 Init options:
   --imsg                    Create an imsg-based config and prompt for a chat when possible

@@ -7,12 +7,12 @@ const WINDOW_FORMAT = [
   "#{window_active}",
   "#{window_panes}",
   "#{pane_current_path}",
-  "#{@agentmux}",
-  "#{@agentmux_run_id}",
-  "#{@agentmux_agent}",
-  "#{@agentmux_repo}",
-  "#{@agentmux_name}",
-  "#{@agentmux_started}",
+  "#{@relaymux}",
+  "#{@relaymux_run_id}",
+  "#{@relaymux_agent}",
+  "#{@relaymux_repo}",
+  "#{@relaymux_name}",
+  "#{@relaymux_started}",
 ].join("\t");
 
 export function validateSessionName(session) {
@@ -65,7 +65,7 @@ export function listAgentWindows({ session }: any = {}) {
     .split("\n")
     .filter(Boolean)
     .map(parseWindowLine)
-    .filter((window) => window.agentmux === "1");
+    .filter((window) => window.relaymux === "1");
 }
 
 function parseWindowLine(line) {
@@ -76,7 +76,7 @@ function parseWindowLine(line) {
     active,
     panes,
     cwd,
-    agentmux,
+    relaymux,
     runId,
     agent,
     repo,
@@ -91,7 +91,7 @@ function parseWindowLine(line) {
     active: active === "1",
     panes: Number(panes),
     cwd,
-    agentmux,
+    relaymux,
     runId,
     agent,
     repo,

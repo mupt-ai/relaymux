@@ -11,7 +11,7 @@ export function launchAgentPath(config) {
 }
 
 export function launchAgentLabel(config) {
-  return config.daemon?.launchAgentLabel || "com.agentmux.daemon";
+  return config.daemon?.launchAgentLabel || "com.relaymux.daemon";
 }
 
 export function renderLaunchAgentPlist({ label, programArguments, workingDirectory, standardOutPath, standardErrorPath }) {
@@ -43,13 +43,13 @@ ${args}
 
 export function installLaunchAgent({ flags, configInfo, binPath, io }) {
   if (!configInfo.exists) {
-    throw new Error(`Config does not exist at ${configInfo.path}. Run agentmux init first.`);
+    throw new Error(`Config does not exist at ${configInfo.path}. Run relaymux init first.`);
   }
 
   const config = configInfo.config;
   const label = launchAgentLabel(config);
   const plistPath = launchAgentPath(config);
-  const logDir = expandPath(config.daemon?.logDir || "~/.local/state/agentmux/logs");
+  const logDir = expandPath(config.daemon?.logDir || "~/.local/state/relaymux/logs");
   const workingDirectory = expandPath(config.orchestrator?.cwd || "~");
   const programArguments = [process.execPath, binPath, "--config", configInfo.path, "daemon"];
   const plist = renderLaunchAgentPlist({

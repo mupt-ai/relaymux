@@ -59,7 +59,7 @@ export function buildAgentInvocation(agentName, agentConfig, context) {
     if (promptMode === "arg") {
       argv.push(context.prompt);
     } else if (promptMode === "env") {
-      env.AGENTMUX_PROMPT = context.prompt;
+      env.RELAYMUX_PROMPT = context.prompt;
     } else if (promptMode === "stdin") {
       stdinFile = context.promptFile;
     }
@@ -86,14 +86,14 @@ export function buildTmuxShellScript(invocation, context) {
   ];
 
   const baseEnv = {
-    AGENTMUX_AGENT: context.agent,
-    AGENTMUX_CONFIG: context.configPath,
-    AGENTMUX_NAME: context.name,
-    AGENTMUX_NOTIFY_COMMAND: quoteArgv(notifyBase),
-    AGENTMUX_PROMPT_FILE: context.promptFile,
-    AGENTMUX_REPO: context.repo,
-    AGENTMUX_RUN_ID: context.runId,
-    AGENTMUX_WORKDIR: context.workdir,
+    RELAYMUX_AGENT: context.agent,
+    RELAYMUX_CONFIG: context.configPath,
+    RELAYMUX_NAME: context.name,
+    RELAYMUX_NOTIFY_COMMAND: quoteArgv(notifyBase),
+    RELAYMUX_PROMPT_FILE: context.promptFile,
+    RELAYMUX_REPO: context.repo,
+    RELAYMUX_RUN_ID: context.runId,
+    RELAYMUX_WORKDIR: context.workdir,
   };
 
   const exports = shellExportBlock({ ...invocation.env, ...baseEnv });
@@ -104,19 +104,19 @@ export function buildTmuxShellScript(invocation, context) {
   const startedNotify = quoteArgv([...notifyBase, "--event", "started", "--message", "started"]);
   const completedNotify = `${quoteArgv([...notifyBase, "--event", "completed", "--exit-code"])} "$status"`;
   const holdOrExit = context.holdOnExit
-    ? 'printf "\\nagentmux: holding shell open after exit %s\\n" "$status"; exec "${SHELL:-/bin/sh}"'
+    ? 'printf "\\nrelaymux: holding shell open after exit %s\\n" "$status"; exec "${SHELL:-/bin/sh}"'
     : 'exit "$status"';
 
   return [
     "#!/bin/sh",
     "set +e",
     exports,
-    'printf "agentmux: started %s (%s)\\n" "$AGENTMUX_RUN_ID" "$AGENTMUX_NAME"',
+    'printf "relaymux: started %s (%s)\\n" "$RELAYMUX_RUN_ID" "$RELAYMUX_NAME"',
     `${startedNotify} >/dev/null 2>&1 || true`,
     agentCommand,
     "status=$?",
     `${completedNotify} >/dev/null 2>&1 || true`,
-    'printf "\\nagentmux: completed %s with exit %s\\n" "$AGENTMUX_RUN_ID" "$status"',
+    'printf "\\nrelaymux: completed %s with exit %s\\n" "$RELAYMUX_RUN_ID" "$status"',
     holdOrExit,
   ].join("\n");
 }

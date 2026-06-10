@@ -10,7 +10,7 @@ export function webhookConfig(config) {
   return {
     host: daemon.host || "127.0.0.1",
     port: Number(daemon.port || 47761),
-    tokenFile: expandPath(daemon.tokenFile || "~/.local/state/agentmux/webhook-token"),
+    tokenFile: expandPath(daemon.tokenFile || "~/.local/state/relaymux/webhook-token"),
     maxBodyBytes: Number(daemon.maxBodyBytes || 65536),
   };
 }
@@ -99,11 +99,11 @@ export function rememberWebhookIdempotencyKey(state, key, { max = 1000 } = {}) {
 export async function createCompletionWebhookServer({ config, state, saveState, enqueue, getStatus, io = console }: any) {
   const resolved = webhookConfig(config);
   if (!isLocalWebhookHost(resolved.host)) {
-    io.warn?.(`agentmux daemon: refusing to bind non-loopback webhook host ${resolved.host}`);
+    io.warn?.(`relaymux daemon: refusing to bind non-loopback webhook host ${resolved.host}`);
     return null;
   }
   if (!isValidWebhookPort(resolved.port)) {
-    io.warn?.(`agentmux daemon: invalid webhook port ${resolved.port}`);
+    io.warn?.(`relaymux daemon: invalid webhook port ${resolved.port}`);
     return null;
   }
 
@@ -111,13 +111,13 @@ export async function createCompletionWebhookServer({ config, state, saveState, 
   try {
     token = ensureWebhookToken(resolved.tokenFile);
   } catch (error) {
-    io.warn?.(`agentmux daemon: failed to initialize webhook token: ${error.message}`);
+    io.warn?.(`relaymux daemon: failed to initialize webhook token: ${error.message}`);
     return null;
   }
 
   const server = http.createServer(async (req, res) => {
     try {
-      const url = new URL(req.url || "/", "http://agentmux.local");
+      const url = new URL(req.url || "/", "http://relaymux.local");
       if (req.method === "GET" && url.pathname === "/health") {
         writeJson(res, 200, {
           ok: true,
@@ -160,7 +160,7 @@ export async function createCompletionWebhookServer({ config, state, saveState, 
       writeJson(res, 404, { ok: false, error: "not found" });
     } catch (error) {
       const statusCode = error?.statusCode || 500;
-      if (statusCode >= 500) io.warn?.(`agentmux daemon webhook failed: ${error.stack || error.message}`);
+      if (statusCode >= 500) io.warn?.(`relaymux daemon webhook failed: ${error.stack || error.message}`);
       if (!res.headersSent) writeJson(res, statusCode, { ok: false, error: error.message || String(error) });
       else res.end();
     }
@@ -172,12 +172,12 @@ export async function createCompletionWebhookServer({ config, state, saveState, 
 
   return new Promise((resolve) => {
     const onError = (error) => {
-      io.warn?.(`agentmux daemon: local webhook unavailable: ${error.message}`);
+      io.warn?.(`relaymux daemon: local webhook unavailable: ${error.message}`);
       resolve(null);
     };
     const onListening = () => {
       server.off("error", onError);
-      server.on("error", (error) => io.warn?.(`agentmux daemon webhook error: ${error.message}`));
+      server.on("error", (error) => io.warn?.(`relaymux daemon webhook error: ${error.message}`));
       resolve(server);
     };
     server.once("error", onError);
