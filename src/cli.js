@@ -18,12 +18,12 @@ import { createWorktree, resolveRepoAndWorkdir } from "./worktree.js";
 export async function main(argv, io = defaultIo()) {
   try {
     const parsed = parseArgv(argv);
-    if (parsed.flags.help || parsed.command === "help") {
-      io.stdout.write(helpText());
-      return 0;
-    }
     if (parsed.flags.version || parsed.command === "version") {
       io.stdout.write("agentmux 0.1.0\n");
+      return 0;
+    }
+    if (parsed.flags.help || parsed.command === "help") {
+      io.stdout.write(helpText());
       return 0;
     }
 
