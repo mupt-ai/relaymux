@@ -1,7 +1,7 @@
 {
   "version": 1,
   "session": "agents",
-  "stateDir": "~/.local/state/relaymux",
+  "stateDir": "~/.relaymux/state",
   "tmux": {
     "sessionMode": "shared",
     "sessionPrefix": "rmx"
@@ -33,12 +33,12 @@
     "enabled": true,
     "host": "127.0.0.1",
     "port": 47761,
-    "tokenFile": "~/.local/state/relaymux/webhook-token",
+    "tokenFile": "~/.relaymux/state/webhook-token",
     "maxBodyBytes": 65536,
     "launchAgentLabel": "com.relaymux.daemon",
     "launchMode": "direct",
     "supervisorPollMs": 15000,
-    "logDir": "~/.local/state/relaymux/logs"
+    "logDir": "~/.relaymux/logs"
   },
   "orchestrator": {
     "cwd": "~",

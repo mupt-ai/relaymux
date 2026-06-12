@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { resolveLogDir } from "./config.js";
 import { expandPath, ensureDirectory } from "./paths.js";
 import { runCommand } from "./process.js";
 import { killWindowByName, validateSessionName } from "./tmux.js";
@@ -51,7 +52,7 @@ export function installLaunchAgent({ flags, configInfo, binPath, io }) {
   const config = configInfo.config;
   const label = launchAgentLabel(config);
   const plistPath = launchAgentPath(config);
-  const logDir = expandPath(config.daemon?.logDir || "~/.local/state/relaymux/logs");
+  const logDir = resolveLogDir(config);
   const workingDirectory = expandPath(config.orchestrator?.cwd || "~");
   const launchMode = resolveLaunchMode(flags, config);
   const session = String(flags.session || config.session || "agents");

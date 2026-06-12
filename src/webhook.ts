@@ -3,14 +3,15 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 
-import { expandPath, ensureDirectory } from "./paths.js";
+import { ensureDirectory } from "./paths.js";
+import { resolveTokenFile } from "./config.js";
 
 export function webhookConfig(config) {
   const daemon = config.daemon || {};
   return {
     host: daemon.host || "127.0.0.1",
     port: Number(daemon.port || 47761),
-    tokenFile: expandPath(daemon.tokenFile || "~/.local/state/relaymux/webhook-token"),
+    tokenFile: resolveTokenFile(config),
     maxBodyBytes: Number(daemon.maxBodyBytes || 65536),
   };
 }

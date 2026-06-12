@@ -7,9 +7,10 @@ import { expandPath } from "./paths.js";
 import { runCommand } from "./process.js";
 
 export function buildImsgConfig(options: any = {}, env = process.env) {
-  const base = defaultConfig();
+  const base = defaultConfig(env);
   const stateDir = options.stateDir || base.stateDir;
   const sessionDir = path.posix.join(stateDir, "sessions");
+  const logDir = options.logDir || (options.stateDir ? path.posix.join(stateDir, "logs") : base.daemon.logDir);
   const imsg = options.imsgPath || findExecutable("imsg", env) || "imsg";
   const pi = options.piPath || findExecutable("pi", env) || "pi";
   const codex = options.codexPath || findExecutable("codex", env) || "codex";
@@ -51,7 +52,7 @@ export function buildImsgConfig(options: any = {}, env = process.env) {
       port: Number(options.port || base.daemon.port),
       tokenFile: path.posix.join(stateDir, "webhook-token"),
       launchAgentLabel: options.launchAgentLabel || base.daemon.launchAgentLabel,
-      logDir: path.posix.join(stateDir, "logs"),
+      logDir,
     },
     orchestrator: {
       ...base.orchestrator,

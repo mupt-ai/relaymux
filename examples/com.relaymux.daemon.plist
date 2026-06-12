@@ -9,7 +9,7 @@
     <string>/usr/local/bin/node</string>
     <string>/usr/local/bin/relaymux</string>
     <string>--config</string>
-    <string>/Users/YOU/.config/relaymux/config.json</string>
+    <string>/Users/YOU/.relaymux/config.json</string>
     <string>daemon</string>
   </array>
   <key>WorkingDirectory</key>
@@ -21,15 +21,15 @@
     <key>HOME</key>
     <string>/Users/YOU</string>
     <key>RELAYMUX_CONFIG</key>
-    <string>/Users/YOU/.config/relaymux/config.json</string>
+    <string>/Users/YOU/.relaymux/config.json</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/YOU/.local/state/relaymux/logs/daemon.out.log</string>
+  <string>/Users/YOU/.relaymux/logs/daemon.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/YOU/.local/state/relaymux/logs/daemon.err.log</string>
+  <string>/Users/YOU/.relaymux/logs/daemon.err.log</string>
 </dict>
 </plist>

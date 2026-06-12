@@ -10,9 +10,11 @@ import { writeDefaultConfig } from "../src/config.js";
 function makeIo(env: Record<string, string> = {}) {
   let stdout = "";
   let stderr = "";
+  const baseEnv = { ...process.env };
+  delete baseEnv.RELAYMUX_SESSION;
   return {
     io: {
-      env: { ...process.env, ...env },
+      env: { ...baseEnv, ...env },
       stdin: { isTTY: false },
       stdout: { isTTY: false, write: (chunk) => { stdout += String(chunk); } },
       stderr: { write: (chunk) => { stderr += String(chunk); } },

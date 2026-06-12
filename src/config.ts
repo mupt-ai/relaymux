@@ -2,11 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { expandPath } from "./paths.js";
+import { defaultRelaymuxHome, defaultRelaymuxHomeConfigValue, expandPath } from "./paths.js";
 
-export function defaultConfig() {
-  const stateDir = "~/.local/state/relaymux";
-  const tokenFile = `${stateDir}/webhook-token`;
+export function defaultConfig(env = process.env) {
+  const homeDir = defaultRelaymuxHomeConfigValue(env);
+  const stateDir = path.posix.join(homeDir, "state");
+  const tokenFile = path.posix.join(stateDir, "webhook-token");
+  const logDir = path.posix.join(homeDir, "logs");
 
   return {
     version: 1,
@@ -52,7 +54,7 @@ export function defaultConfig() {
       launchAgentLabel: "com.relaymux.daemon",
       launchMode: "direct",
       supervisorPollMs: 15000,
-      logDir: `${stateDir}/logs`,
+      logDir,
     },
     orchestrator: {
       description: "Pi orchestrator command. Use a non-interactive Pi invocation if your pi binary supports one.",
@@ -101,40 +103,94 @@ export function defaultConfig() {
 }
 
 export function defaultConfigPath(env = process.env) {
-  const base = env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+  return path.join(defaultRelaymuxHome(env), "config.json");
+}
+
+export function legacyDefaultConfigPath(env = process.env) {
+  const base = env.XDG_CONFIG_HOME ? expandPath(env.XDG_CONFIG_HOME) : path.join(os.homedir(), ".config");
   return path.join(base, "relaymux", "config.json");
 }
 
+export function legacyDefaultStateDir(env = process.env) {
+  const base = env.XDG_STATE_HOME ? expandPath(env.XDG_STATE_HOME) : path.join(os.homedir(), ".local", "state");
+  return path.join(base, "relaymux");
+}
+
 export function loadConfig({ configPath, env = process.env }: any = {}) {
-  const resolvedPath = expandPath(configPath || defaultConfigPath(env));
+  const explicitConfigPath = Boolean(configPath);
+  const defaultPath = defaultConfigPath(env);
+  const legacyPath = legacyDefaultConfigPath(env);
+  let resolvedPath = expandPath(configPath || defaultPath);
+
+  if (!explicitConfigPath && !fs.existsSync(resolvedPath) && legacyPath !== resolvedPath && fs.existsSync(legacyPath)) {
+    resolvedPath = legacyPath;
+  }
+
   if (!fs.existsSync(resolvedPath)) {
-    return { config: defaultConfig(), path: resolvedPath, exists: false };
+    return {
+      config: defaultConfig(env),
+      path: resolvedPath,
+      exists: false,
+      defaultPath,
+      legacyPath,
+      usingLegacyDefault: false,
+    };
   }
 
   const parsed = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
   return {
-    config: mergeConfig(defaultConfig(), parsed),
+    config: normalizeConfig(mergeConfig(defaultConfig(env), parsed), parsed),
     path: resolvedPath,
     exists: true,
+    defaultPath,
+    legacyPath,
+    usingLegacyDefault: !explicitConfigPath && legacyPath === resolvedPath && defaultPath !== legacyPath,
   };
 }
 
-export function writeDefaultConfig(configPath, { force = false } = {}) {
-  return writeConfig(configPath, defaultConfig(), { force });
+export function writeDefaultConfig(configPath, { force = false, env = process.env } = {}) {
+  return writeConfig(configPath, defaultConfig(env), { force, env });
 }
 
-export function writeConfig(configPath, config, { force = false } = {}) {
-  const resolvedPath = expandPath(configPath || defaultConfigPath());
+export function writeConfig(configPath, config, { force = false, env = process.env } = {}) {
+  const resolvedPath = expandPath(configPath || defaultConfigPath(env));
   if (fs.existsSync(resolvedPath) && !force) {
     throw new Error(`Config already exists at ${resolvedPath}. Use --force to overwrite.`);
   }
   fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
   fs.writeFileSync(resolvedPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  try { fs.chmodSync(resolvedPath, 0o600); } catch {}
   return resolvedPath;
 }
 
-export function resolveStateDir(config) {
-  return expandPath(config.stateDir || defaultConfig().stateDir);
+export function resolveStateDir(config, env = process.env) {
+  return expandPath(config.stateDir || defaultConfig(env).stateDir);
+}
+
+export function resolveLogDir(config, env = process.env) {
+  return expandPath(config.daemon?.logDir || defaultConfig(env).daemon.logDir);
+}
+
+export function resolveTokenFile(config, env = process.env) {
+  return expandPath(config.daemon?.tokenFile || defaultConfig(env).daemon.tokenFile);
+}
+
+function normalizeConfig(config, override) {
+  if (!isPlainObject(override)) {
+    return config;
+  }
+
+  if (override.stateDir) {
+    config.daemon = config.daemon || {};
+    if (!hasOwnPath(override, ["daemon", "tokenFile"])) {
+      config.daemon.tokenFile = path.posix.join(String(override.stateDir), "webhook-token");
+    }
+    if (!hasOwnPath(override, ["daemon", "logDir"])) {
+      config.daemon.logDir = path.posix.join(String(override.stateDir), "logs");
+    }
+  }
+
+  return config;
 }
 
 function mergeConfig(base, override) {
@@ -151,6 +207,17 @@ function mergeConfig(base, override) {
     }
   }
   return merged;
+}
+
+function hasOwnPath(value, keys) {
+  let current = value;
+  for (const key of keys) {
+    if (!isPlainObject(current) || !Object.prototype.hasOwnProperty.call(current, key)) {
+      return false;
+    }
+    current = current[key];
+  }
+  return true;
 }
 
 function isPlainObject(value) {

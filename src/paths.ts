@@ -2,6 +2,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+export function defaultRelaymuxHome(env = process.env) {
+  return expandPath(env.RELAYMUX_HOME || "~/.relaymux");
+}
+
+export function defaultRelaymuxHomeConfigValue(env = process.env) {
+  return env.RELAYMUX_HOME ? expandPath(env.RELAYMUX_HOME) : "~/.relaymux";
+}
+
 export function expandPath(value, cwd = process.cwd()) {
   if (!value) {
     return value;

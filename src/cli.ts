@@ -6,12 +6,13 @@ import { randomUUID } from "node:crypto";
 import { parseArgv } from "./args.js";
 import { buildAgentInvocation, buildTmuxShellCommand, buildTmuxShellScript, quoteArgv, renderTemplate, shellExportBlock } from "./command.js";
 import { collectDoctorChecks } from "./doctor.js";
-import { defaultConfigPath, loadConfig, resolveStateDir, writeConfig, writeDefaultConfig } from "./config.js";
+import { defaultConfigPath, loadConfig, resolveLogDir, resolveStateDir, writeConfig, writeDefaultConfig } from "./config.js";
 import { runDaemon } from "./daemon.js";
 import { getLaunchAgentStatus, installLaunchAgent, launchAgentPath, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
 import { handleNotify } from "./notify.js";
 import { webhookConfig, webhookStatus } from "./webhook.js";
 import { expandPath, ensureDirectory, pathExists, readTextFile } from "./paths.js";
+import { applyHomeMigration, buildHomeMigrationInventory, ensureRelaymuxHomeLayout, formatHomeMigrationInventory, formatHomeMigrationResults } from "./migration.js";
 import { buildImsgConfig, initOptionsFromFlags, resolveImsgChatId } from "./setup-imsg.js";
 import { latestEventsByRun, readRuns, recordRun, writePromptFile, writeScriptFile } from "./state.js";
 import { resolveLaunchSession, resolveTmuxSessionMode } from "./session.js";
@@ -39,9 +40,11 @@ export async function main(argv, io = defaultIo()) {
     }
 
     const configInfo = loadConfig({ configPath: parsed.flags.config, env: io.env });
-    const stateDir = resolveStateDir(configInfo.config);
+    const stateDir = resolveStateDir(configInfo.config, io.env);
 
     switch (parsed.command) {
+      case "migrate-home":
+        return handleMigrateHome(parsed.flags, configInfo, io);
       case "launch":
         return handleLaunch(parsed.flags, configInfo, stateDir, io);
       case "status":
@@ -90,7 +93,7 @@ export async function main(argv, io = defaultIo()) {
 
 async function handleSetup(flags, io) {
   const configPath = flags.config || defaultConfigPath(io.env);
-  let configInfo = loadConfig({ configPath, env: io.env });
+  let configInfo = loadConfig({ configPath: flags.config, env: io.env });
   const shouldInstallLaunchAgent = flags.launchAgent !== false;
 
   if (!configInfo.exists || flags.force) {
@@ -102,6 +105,9 @@ async function handleSetup(flags, io) {
     configInfo = loadConfig({ configPath, env: io.env });
   } else {
     io.stdout.write(`Using existing config at ${configInfo.path}\n`);
+    if (configInfo.usingLegacyDefault) {
+      io.stdout.write("Tip: this is the legacy config path. Run `relaymux migrate-home --dry-run` to inventory a safe move into ~/.relaymux.\n");
+    }
     if (shouldInstallLaunchAgent) {
       installLaunchAgent({
         flags: { load: flags.load },
@@ -128,8 +134,10 @@ async function handleInit(flags, io) {
       ...initOptionsFromFlags(flags),
       chatId,
     }, io.env);
-    const target = writeConfig(flags.config || defaultConfigPath(io.env), config, { force: Boolean(flags.force) });
+    const target = writeConfig(flags.config || defaultConfigPath(io.env), config, { force: Boolean(flags.force), env: io.env });
+    const homeDir = ensureRelaymuxHomeLayout(path.dirname(defaultConfigPath(io.env)));
     io.stdout.write(`Created ${target} with imsg defaults\n`);
+    io.stdout.write(`relaymux home: ${homeDir} (state ${resolveStateDir(config, io.env)}, logs ${resolveLogDir(config, io.env)})\n`);
     io.stdout.write("Next: relaymux doctor && relaymux restart-launch-agent && relaymux status\n");
     if (flags.installLaunchAgent) {
       installLaunchAgent({
@@ -142,9 +150,53 @@ async function handleInit(flags, io) {
     return 0;
   }
 
-  const target = writeDefaultConfig(flags.config || defaultConfigPath(io.env), { force: Boolean(flags.force) });
+  const target = writeDefaultConfig(flags.config || defaultConfigPath(io.env), { force: Boolean(flags.force), env: io.env });
+  const config = loadConfig({ configPath: target, env: io.env }).config;
+  const homeDir = ensureRelaymuxHomeLayout(path.dirname(defaultConfigPath(io.env)));
   io.stdout.write(`Created ${target}\n`);
+  io.stdout.write(`relaymux home: ${homeDir} (state ${resolveStateDir(config, io.env)}, logs ${resolveLogDir(config, io.env)})\n`);
   io.stdout.write("Tip: use `relaymux init --imsg` for an imsg-based setup wizard.\n");
+  return 0;
+}
+
+function handleMigrateHome(flags, configInfo, io) {
+  const inventory = buildHomeMigrationInventory({
+    homeDir: flags.home || flags.relaymuxHome,
+    targetConfigPath: flags.targetConfig,
+    legacyConfigPath: flags.legacyConfig,
+    legacyStateDir: flags.legacyStateDir,
+    orchestratorImessageDir: flags.orchestratorImessageDir,
+    researchDir: flags.researchDir,
+    agentmuxConfigPath: flags.agentmuxConfig,
+    agentmuxStateDir: flags.agentmuxStateDir,
+    configPath: configInfo.exists ? configInfo.path : undefined,
+    config: configInfo.config,
+  }, io.env);
+
+  const applying = flags.apply === true && flags.dryRun !== true;
+  if (flags.json && !applying) {
+    io.stdout.write(`${JSON.stringify(inventory, null, 2)}\n`);
+    return 0;
+  }
+
+  io.stdout.write(formatHomeMigrationInventory(inventory, {
+    applying,
+    force: Boolean(flags.force),
+    symlink: Boolean(flags.symlink),
+  }));
+
+  if (!applying) return 0;
+
+  const results = applyHomeMigration(inventory, {
+    force: Boolean(flags.force),
+    symlink: Boolean(flags.symlink),
+    env: io.env,
+  });
+  if (flags.json) {
+    io.stdout.write(`${JSON.stringify({ inventory, results }, null, 2)}\n`);
+  } else {
+    io.stdout.write(formatHomeMigrationResults(results));
+  }
   return 0;
 }
 
@@ -569,7 +621,7 @@ function handleStatus(flags, configInfo, stateDir, io) {
   }
 
   rows.sort((a, b) => String(b.started).localeCompare(String(a.started)));
-  const daemon = daemonStatus(config, configInfo.path);
+  const daemon = daemonStatus(config, configInfo.path, io.env);
 
   if (flags.json) {
     io.stdout.write(`${JSON.stringify({ daemon, runs: rows }, null, 2)}\n`);
@@ -582,6 +634,7 @@ function handleStatus(flags, configInfo, stateDir, io) {
       ? `LaunchAgent ${launchAgent.label} loaded${launchAgent.running ? ` pid=${launchAgent.pid}` : ""}`
       : `LaunchAgent ${launchAgent.label} not loaded`
     : `LaunchAgent unsupported on ${process.platform}`;
+  io.stdout.write(`Home: ${daemon.homeDir}; config ${daemon.configPath}; state ${daemon.stateDir}; logs ${daemon.logDir}\n`);
   io.stdout.write(`Background service: ${daemon.enabled ? "enabled" : "disabled"}; mode ${daemon.launchMode}/background (no tmux); ${launchAgentText}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}\n`);
   io.stdout.write(`Agent tmux: session mode ${daemon.agentSessionMode}; ${session ? `filter session ${session}` : "showing all relaymux-managed sessions"}; tabs are tmux windows, never panes/splits.\n`);
 
@@ -594,11 +647,14 @@ function handleStatus(flags, configInfo, stateDir, io) {
   return 0;
 }
 
-function daemonStatus(config, configPath) {
+function daemonStatus(config, configPath, env = process.env) {
   const agentSessionMode = resolveTmuxSessionMode({ config });
   return {
     enabled: config.daemon?.enabled !== false,
+    homeDir: path.dirname(defaultConfigPath(env)),
     configPath,
+    stateDir: resolveStateDir(config, env),
+    logDir: resolveLogDir(config, env),
     launchMode: "direct",
     agentSessionMode,
     featureSessionMode: agentSessionMode,
@@ -784,6 +840,7 @@ function helpText() {
 Mental model:
   - iMessage/background/orchestrator runs as a direct macOS LaunchAgent outside tmux.
   - By default, all agents open as tmux tabs/windows in one shared session.
+  - Managed config/state/logs/prompts/scratch live under ~/.relaymux by default.
   - Use --session only when you explicitly want a separate/new/named tmux session; panes/splits are never used.
 
 Start here:
@@ -803,6 +860,7 @@ Usage:
   relaymux ask <text> [--no-wait] [--reply-mode imessage|none]
   relaymux status [--json] [--session <name>]
   relaymux notify [--run-id <id>] [--reply-mode imessage|none] [--message <text>]
+  relaymux migrate-home [--dry-run] [--apply] [--symlink]
   relaymux doctor
 
 Setup/init options:
@@ -812,6 +870,13 @@ Setup/init options:
   --state-dir <path>        State/token/log directory
   --install-launch-agent    Install the direct/background LaunchAgent after writing config
   --no-launch-agent         For setup: skip LaunchAgent installation
+
+Migration options:
+  --apply                   Copy inventoried relaymux-owned files into ~/.relaymux
+  --symlink                 After copying, replace old relaymux-owned source paths with symlinks
+  --home <path>             Override target relaymux home (default ~/.relaymux)
+  --legacy-config <path>    Override legacy config path to inventory
+  --legacy-state-dir <path> Override legacy state dir to inventory
 
 Launch options:
   --prompt-file <path>       Read prompt from a file
@@ -844,6 +909,7 @@ Useful commands:
   tmux attach -t <session>       attach to the shared or named agent session
   tmux kill-session -t <session> kill only that tmux session; background iMessage keeps running
 
-Config defaults to ${defaultConfigPath()}.
+Default home layout: ~/.relaymux/{config.json,state,logs,tasks,reports,research,workouts}.
+Config defaults to ${defaultConfigPath()} (legacy ~/.config/relaymux/config.json is still read if the new config does not exist).
 `;
 }

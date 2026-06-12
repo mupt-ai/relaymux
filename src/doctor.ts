@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { defaultConfigPath, legacyDefaultConfigPath, resolveLogDir, resolveStateDir } from "./config.js";
 import { runCommand } from "./process.js";
 import { launchAgentPath } from "./launch-agent.js";
+import { defaultRelaymuxHome } from "./paths.js";
 import { webhookStatus } from "./webhook.js";
 
 export function findExecutable(command, env = process.env) {
@@ -55,6 +57,21 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
     ok: configInfo.exists,
     detail: configInfo.exists ? configInfo.path : `not initialized (${configInfo.path})`,
   });
+
+  checks.push({
+    name: "relaymux-home",
+    ok: true,
+    detail: `${defaultRelaymuxHome(env)}; default config ${defaultConfigPath(env)}; state ${resolveStateDir(config, env)}; logs ${resolveLogDir(config, env)}`,
+  });
+
+  const legacyPath = legacyDefaultConfigPath(env);
+  if (configInfo.exists && configInfo.path === legacyPath) {
+    checks.push({
+      name: "legacy-config-path",
+      ok: true,
+      detail: `using legacy config path ${legacyPath}; run relaymux migrate-home --dry-run to inventory ~/.relaymux migration`,
+    });
+  }
 
   if (configInfo.exists) {
     const stat = fs.statSync(configInfo.path);

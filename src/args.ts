@@ -1,6 +1,7 @@
 const BOOLEAN_FLAGS = new Set([
   "all",
   "allow-tmux-daemon",
+  "apply",
   "attach",
   "create-worktree",
   "dry-run",
@@ -17,6 +18,7 @@ const BOOLEAN_FLAGS = new Set([
   "once",
   "print-command",
   "restart",
+  "symlink",
   "version",
   "wait",
 ]);

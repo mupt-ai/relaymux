@@ -4,7 +4,8 @@ import { randomUUID } from "node:crypto";
 
 import { buildAgentInvocation } from "./command.js";
 import { DEFAULT_ORCHESTRATOR_SYSTEM_PROMPT, buildRuntimePromptContext } from "./prompt.js";
-import { expandPath, ensureDirectory, readTextFile } from "./paths.js";
+import { resolveStateDir, resolveTokenFile } from "./config.js";
+import { defaultRelaymuxHome, expandPath, ensureDirectory, readTextFile } from "./paths.js";
 import { runCommandAsync } from "./async-process.js";
 
 export function buildIncomingOrchestratorPrompt({ config, configPath, incomingText }) {
@@ -62,7 +63,9 @@ export function buildFullPrompt({ config, configPath, title, body }) {
     configPath,
     session: config.session || "agents",
     sessionMode: config.tmux?.sessionMode || "shared",
-    tokenFile: expandPath(daemon.tokenFile || "~/.local/state/relaymux/webhook-token"),
+    homeDir: defaultRelaymuxHome(),
+    stateDir: resolveStateDir(config),
+    tokenFile: resolveTokenFile(config),
     webhookUrl,
   });
 
@@ -78,7 +81,7 @@ export async function runOrchestrator(config, { prompt, stateDir, configPath, re
     promptFile,
     configPath,
     session: config.session || "agents",
-    tokenFile: expandPath(config.daemon?.tokenFile || "~/.local/state/relaymux/webhook-token"),
+    tokenFile: resolveTokenFile(config),
     webhookPort: Number(config.daemon?.port || 47761),
     webhookHost: config.daemon?.host || "127.0.0.1",
     repo: cwd,

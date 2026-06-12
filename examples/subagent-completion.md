@@ -25,7 +25,7 @@ relaymux notify \
 Direct HTTP shape, if you cannot use the CLI helper:
 
 ```bash
-TOKEN="$(cat ~/.local/state/relaymux/webhook-token)"
+TOKEN="$(cat ~/.relaymux/state/webhook-token)"
 curl -sS -X POST http://127.0.0.1:47761/message \
   -H "authorization: Bearer $TOKEN" \
   -H "content-type: application/json" \
