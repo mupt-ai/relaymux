@@ -5,7 +5,7 @@ import { runCommand } from "./process.js";
 import { validateSessionName } from "./tmux.js";
 
 const DEFAULT_SESSION_PREFIX = "rmx";
-const DEFAULT_SESSION_MODE = "per-worktree";
+const DEFAULT_SESSION_MODE = "shared";
 const MAX_SESSION_NAME_LENGTH = 64;
 
 export function resolveTmuxSessionMode({ flags = {}, config = {} }: any = {}) {
@@ -14,10 +14,10 @@ export function resolveTmuxSessionMode({ flags = {}, config = {} }: any = {}) {
   if (["per-worktree", "worktree", "feature", "per-feature"].includes(mode)) {
     return "per-worktree";
   }
-  if (["shared", "session"].includes(mode)) {
+  if (["shared", "session", "single", "one-session", "tabs"].includes(mode)) {
     return "shared";
   }
-  throw new Error(`Invalid tmux session mode "${rawMode}". Use "per-worktree" or "shared".`);
+  throw new Error(`Invalid tmux session mode "${rawMode}". Use "shared" or "per-worktree".`);
 }
 
 export function resolveLaunchSession({ flags = {}, config = {}, env = {}, repo, workdir }: any) {
@@ -31,7 +31,11 @@ export function resolveLaunchSession({ flags = {}, config = {}, env = {}, repo, 
   if (mode === "shared") {
     const session = String(env.RELAYMUX_SESSION || config.session || "agents");
     validateSessionName(session);
-    return { session, mode, source: env.RELAYMUX_SESSION ? "RELAYMUX_SESSION" : "config.session" };
+    return {
+      session,
+      mode,
+      source: env.RELAYMUX_SESSION ? "RELAYMUX_SESSION" : (config.session ? "config.session" : "default"),
+    };
   }
 
   const branch = String(flags.worktreeBranch || detectGitBranch(workdir) || "");

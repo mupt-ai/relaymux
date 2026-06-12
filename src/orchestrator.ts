@@ -61,7 +61,7 @@ export function buildFullPrompt({ config, configPath, title, body }) {
   const runtime = buildRuntimePromptContext({
     configPath,
     session: config.session || "agents",
-    sessionMode: config.tmux?.sessionMode || "per-worktree",
+    sessionMode: config.tmux?.sessionMode || "shared",
     tokenFile: expandPath(daemon.tokenFile || "~/.local/state/relaymux/webhook-token"),
     webhookUrl,
   });

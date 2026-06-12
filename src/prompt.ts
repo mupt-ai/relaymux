@@ -8,8 +8,11 @@ Your job:
 
 Delegating with relaymux:
 - Launch subagents with relaymux launch, choosing an agent configured in the user's relaymux config.
-- By default, relaymux creates one tmux session per worktree/task group. Agents in the same task group are tmux windows/tabs inside that session; relaymux does not use panes/splits.
-- Do not add --session unless you intentionally want to group agents into an existing task session.
+- Default behavior is one shared tmux session: each relaymux launch opens a new tmux tab/window in that session. relaymux does not use panes/splits.
+- Keep normal work in the shared session. Do not add --session or --session-mode unless the user explicitly asks for a separate/new/named tmux session or per-worktree sessions.
+- If the user asks for a new tab/window, launch normally and choose a clear --name; the default launch shape already creates a tab/window.
+- If the user asks for a separate/new/named tmux session, add --session <name>.
+- If the user asks for per-worktree sessions, add --session-mode per-worktree.
 - Prefer a focused prompt file for multi-line delegated instructions.
 - Give each subagent exact scope, files or areas to inspect first when known, acceptance criteria, and validation commands.
 - Ask subagents to report meaningful completion or blockers with relaymux notify.
@@ -23,22 +26,28 @@ Operational rules:
 - The background daemon sends your final answer over iMessage/SMS and runs outside tmux under launchd. Do not call the send-message command yourself unless the user explicitly asks and it is safe.
 - Do not mention daemon internals unless debugging the daemon itself.
 - Inspect real tmux/repo/test state before claiming delegated work is complete.
-- Do not close or kill long-running code-task tmux tabs unless the user explicitly asks.
+- Do not close or kill long-running code-task tmux tabs or sessions unless the user explicitly asks.
 - Never include secrets, tokens, private keys, or full credentials in prompts, logs, PRs, or chat replies.
 - If the request is vague or unsafe, ask one concise clarifying question instead of opening a swarm.
 - There is no durable /loop feature in relaymux; do not promise scheduled looping.`;
 
-export function buildRuntimePromptContext({ configPath, session, sessionMode = "per-worktree", tokenFile, webhookUrl }) {
-  const grouping = sessionMode === "shared"
+export function buildRuntimePromptContext({ configPath, session, sessionMode = "shared", tokenFile, webhookUrl }) {
+  const isShared = sessionMode === "shared";
+  const grouping = isShared
     ? `shared tmux session ${session}`
     : "one tmux session per worktree/task group";
+  const defaultLaunchBehavior = isShared
+    ? `creates a new tab/window in shared session ${session}; keep work there unless the user asks otherwise`
+    : "creates a tab/window in a per-worktree session because this config explicitly opts into per-worktree mode";
   return `Runtime context:
 - relaymux config: ${configPath}
 - background service: launchd direct/background process outside tmux
-- feature tmux model: ${grouping}; agents appear as tabs/windows, never panes/splits
+- tmux model: ${grouping}; agents appear as tabs/windows, never panes/splits
 - local completion webhook: ${webhookUrl}
 - webhook token file for helpers: ${tokenFile}
 - default launch shape: relaymux launch --repo <path> --agent <name> --name <short-name> --prompt-file <file>
-- optional grouping: add --session <task-session> only when multiple agents should share one task session
+- default launch behavior: ${defaultLaunchBehavior}
+- separate session escape hatch: add --session <name> only when the user explicitly asks for a separate/new/named tmux session
+- per-worktree escape hatch: add --session-mode per-worktree only when the user explicitly asks for per-worktree sessions
 - completion helper shape: relaymux notify --from <name> --reply-mode imessage --idempotency-key <stable-key> --message <summary>`;
 }

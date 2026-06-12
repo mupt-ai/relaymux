@@ -3,7 +3,7 @@
   "session": "relaymux-mock",
   "stateDir": "/tmp/relaymux-mock/state",
   "tmux": {
-    "sessionMode": "per-worktree",
+    "sessionMode": "shared",
     "sessionPrefix": "rmx"
   },
   "imessage": {

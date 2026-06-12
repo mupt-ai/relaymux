@@ -1,26 +1,28 @@
 # relaymux
 
-`relaymux` lets you text a local Pi orchestrator over iMessage/SMS and delegate coding agents into `tmux` task sessions.
+`relaymux` lets you text a local Pi orchestrator over iMessage/SMS and delegate coding agents into `tmux` tabs.
 
 ## Mental model
 
 - **Background service:** iMessage polling, the local webhook, and the orchestrator run as a direct macOS LaunchAgent process. They do **not** run in tmux.
-- **Feature sessions:** each worktree/task group gets its own tmux session by default.
-- **Agent tabs:** agents launched into the same task group show up as tmux windows/tabs inside that session. relaymux-managed panes/splits are not used.
+- **Shared agent session:** by default, all agent launches go into one tmux session (`session` in config, default `agents`).
+- **Agent tabs:** each launch creates a tmux window/tab in that session. relaymux-managed panes/splits are not used.
 
-This means it is safe to kill a feature tmux session:
+If you explicitly want isolation, pass `--session <name>` for a separate/named tmux session, or `--session-mode per-worktree` for deterministic per-worktree sessions.
+
+Killing an agent tmux session kills the tabs in that session, but it does not uninstall or stop the iMessage/background service:
 
 ```bash
-tmux kill-session -t <feature-session>
+tmux kill-session -t <session>
 ```
 
-The iMessage/background service keeps running and launchd restarts it if it exits.
+launchd restarts the background service if it exits.
 
 ## Prerequisites
 
 - macOS for the iMessage LaunchAgent flow.
 - `node` 20+, `npm`, and `git`.
-- `tmux` for feature/task sessions.
+- `tmux` for agent tabs.
 - An `imsg` CLI that can read/send Messages.app chats.
 - A local orchestrator command, usually `pi`.
 
@@ -64,7 +66,7 @@ relaymux restart-launch-agent
 relaymux status
 ```
 
-Launch a first feature agent:
+Launch a first agent tab:
 
 ```bash
 relaymux launch \
@@ -74,10 +76,10 @@ relaymux launch \
   --prompt "Fix the API bug, run tests, and report back with relaymux notify."
 ```
 
-Attach to the feature session shown by `relaymux status`:
+Attach to the shared session shown by `relaymux status`:
 
 ```bash
-tmux attach -t <feature-session>
+tmux attach -t agents
 ```
 
 ## Config
@@ -90,7 +92,7 @@ Minimal shape:
   "session": "agents",
   "stateDir": "~/.local/state/relaymux",
   "tmux": {
-    "sessionMode": "per-worktree",
+    "sessionMode": "shared",
     "sessionPrefix": "rmx"
   },
   "daemon": {
@@ -123,20 +125,23 @@ Minimal shape:
 Default:
 
 ```json
-{"tmux": {"sessionMode": "per-worktree", "sessionPrefix": "rmx"}}
+{"session": "agents", "tmux": {"sessionMode": "shared"}}
 ```
 
-relaymux derives a deterministic, short, tmux-safe session name from the repo/worktree path plus branch when known. Multiple agents launched from the same worktree reuse that same session unless you pass `--session`.
+`relaymux launch` creates a new tmux tab/window in the configured shared session. Multiple agents from different repos/worktrees all appear as tabs in that one session unless you ask for a different shape.
 
 Escape hatches:
 
 ```bash
-# Group several agents into the same task session.
+# Launch this agent into a separate/named tmux session.
 relaymux launch --session my-task --repo ~/code/app --agent pi --prompt @prompt.txt
 
-# Use the older shared-session behavior globally.
+# Use deterministic per-worktree sessions for this launch.
+relaymux launch --session-mode per-worktree --repo ~/code/app --agent pi --prompt @prompt.txt
+
+# Or opt into per-worktree sessions globally.
 # config.json
-{"tmux": {"sessionMode": "shared"}, "session": "agents"}
+{"tmux": {"sessionMode": "per-worktree", "sessionPrefix": "rmx"}}
 ```
 
 No relaymux-managed panes/splits are created. Old `tmux.extraWindows` entries with `mode: "pane"` are treated as full windows/tabs in the legacy tmux-daemon path.
@@ -145,8 +150,8 @@ No relaymux-managed panes/splits are created. Old `tmux.extraWindows` entries wi
 
 ```bash
 relaymux doctor                 # config, commands, token perms, background mode
-relaymux status                 # background service + all relaymux tmux sessions/tabs
-relaymux status --session NAME  # filter to one feature session
+relaymux status                 # background service + relaymux tmux tabs
+relaymux status --session NAME  # filter to one tmux session
 relaymux status --history       # include old run records whose tabs are gone
 relaymux status-launch-agent    # launchd status for the background service
 relaymux restart-launch-agent   # regenerate/reload direct LaunchAgent
@@ -177,10 +182,10 @@ rm -rf ~/.local/lib/relaymux ~/.local/bin/relaymux
 # rm -rf ~/.local/state/relaymux ~/.config/relaymux
 ```
 
-Killing feature sessions does not uninstall relaymux:
+Killing tmux sessions does not uninstall relaymux or stop the background service:
 
 ```bash
-tmux kill-session -t <feature-session>
+tmux kill-session -t <session>
 ```
 
 ## Troubleshooting
@@ -222,7 +227,7 @@ brew install tmux
 relaymux doctor
 ```
 
-The background iMessage service can run without tmux, but feature agents need it.
+The background iMessage service can run without tmux, but agent tabs need it.
 
 ### Config errors
 
@@ -245,7 +250,7 @@ rm -rf /tmp/relaymux-mock
 node ./dist/bin/relaymux.js --config examples/config.mock.json daemon --once
 ```
 
-Launch a harmless feature tab with a mock agent:
+Launch a harmless agent tab with a mock agent:
 
 ```bash
 mkdir -p /tmp/relaymux-mock/repo

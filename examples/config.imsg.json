@@ -3,7 +3,7 @@
   "session": "agents",
   "stateDir": "~/.local/state/relaymux",
   "tmux": {
-    "sessionMode": "per-worktree",
+    "sessionMode": "shared",
     "sessionPrefix": "rmx"
   },
   "imessage": {

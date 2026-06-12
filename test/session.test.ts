@@ -45,20 +45,30 @@ test("deriveFeatureSessionName is deterministic, safe, short, and branch-sensiti
   assert.ok(first.length <= 64);
 });
 
-test("resolveLaunchSession defaults to per-worktree and honors explicit/shared escape hatches", () => {
-  const config = { session: "shared-agents", tmux: { sessionMode: "per-worktree", sessionPrefix: "rmx" } };
+test("resolveLaunchSession defaults to shared and honors explicit/per-worktree escape hatches", () => {
+  const config = { session: "shared-agents", tmux: { sessionPrefix: "rmx" } };
 
-  const perWorktree = resolveLaunchSession({
+  assert.equal(resolveTmuxSessionMode({}), "shared");
+
+  const sharedFromEnv = resolveLaunchSession({
     flags: { worktreeBranch: "feature/api" },
     config,
-    env: { RELAYMUX_SESSION: "ignored-env" },
+    env: { RELAYMUX_SESSION: "env-agents" },
     repo: "/tmp/repo",
     workdir: "/tmp/repo-api",
     name: "api",
   });
-  assert.equal(perWorktree.mode, "per-worktree");
-  assert.notEqual(perWorktree.session, "shared-agents");
-  assert.notEqual(perWorktree.session, "ignored-env");
+  assert.deepEqual(sharedFromEnv, { session: "env-agents", mode: "shared", source: "RELAYMUX_SESSION" });
+
+  const sharedFromConfig = resolveLaunchSession({
+    flags: { worktreeBranch: "feature/api" },
+    config,
+    env: {},
+    repo: "/tmp/repo",
+    workdir: "/tmp/repo-api",
+    name: "api",
+  });
+  assert.deepEqual(sharedFromConfig, { session: "shared-agents", mode: "shared", source: "config.session" });
 
   const explicit = resolveLaunchSession({
     flags: { session: "manual-group" },
@@ -70,5 +80,17 @@ test("resolveLaunchSession defaults to per-worktree and honors explicit/shared e
   });
   assert.deepEqual(explicit, { session: "manual-group", mode: "explicit", source: "--session" });
 
-  assert.equal(resolveTmuxSessionMode({ config: { tmux: { sessionMode: "shared" } } }), "shared");
+  const perWorktree = resolveLaunchSession({
+    flags: { sessionMode: "per-worktree", worktreeBranch: "feature/api" },
+    config,
+    env: { RELAYMUX_SESSION: "ignored-env" },
+    repo: "/tmp/repo",
+    workdir: "/tmp/repo-api",
+    name: "api",
+  });
+  assert.equal(perWorktree.mode, "per-worktree");
+  assert.notEqual(perWorktree.session, "shared-agents");
+  assert.notEqual(perWorktree.session, "ignored-env");
+
+  assert.equal(resolveTmuxSessionMode({ config: { tmux: { sessionMode: "per-worktree" } } }), "per-worktree");
 });

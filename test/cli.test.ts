@@ -75,7 +75,32 @@ test("supervise-tmux daemon mode is retired by default", async () => {
   assert.match(harness.stderr, /outside tmux/);
 });
 
-test("launch dry-run defaults to a per-worktree feature session", async () => {
+test("launch dry-run defaults to the shared configured session", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-repo-"));
+  const harness = makeIo();
+  const code = await main([
+    "--config",
+    writeTempConfig("launch-shared"),
+    "launch",
+    "--repo",
+    dir,
+    "--agent",
+    "custom",
+    "--name",
+    "api-fix",
+    "--worktree-branch",
+    "feature/api-fix",
+    "--prompt",
+    "noop",
+    "--dry-run",
+  ], harness.io);
+
+  assert.equal(code, 0);
+  assert.match(harness.stdout, /# tmux session: agents \(shared; config\.session\)/);
+  assert.doesNotMatch(harness.stdout, /# tmux session: rmx-/);
+});
+
+test("launch dry-run honors per-worktree session mode", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-repo-"));
   const harness = makeIo({ RELAYMUX_SESSION: "old-shared" });
   const code = await main([
@@ -88,6 +113,8 @@ test("launch dry-run defaults to a per-worktree feature session", async () => {
     "custom",
     "--name",
     "api-fix",
+    "--session-mode",
+    "per-worktree",
     "--worktree-branch",
     "feature/api-fix",
     "--prompt",

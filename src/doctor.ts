@@ -45,9 +45,9 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
   }
 
   checks.push({
-    name: "tmux-feature-tabs",
+    name: "tmux-agent-tabs",
     ok: Boolean(tmuxPath),
-    detail: tmuxPath ? `${tmuxPath}${tmuxVersion ? ` (${tmuxVersion})` : ""}; used only for feature/task sessions` : "not found on PATH; feature agents need tmux",
+    detail: tmuxPath ? `${tmuxPath}${tmuxVersion ? ` (${tmuxVersion})` : ""}; used only for agent tabs/sessions` : "not found on PATH; agent tabs need tmux",
   });
 
   checks.push({

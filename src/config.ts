@@ -14,7 +14,7 @@ export function defaultConfig() {
     stateDir,
     holdOnExit: false,
     tmux: {
-      sessionMode: "per-worktree",
+      sessionMode: "shared",
       sessionPrefix: "rmx",
       extraWindows: [],
     },

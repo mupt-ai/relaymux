@@ -296,7 +296,7 @@ async function handleAsk(flags, positionals, configInfo, io) {
 
 function handleStartTmux(flags, configInfo, stateDir, io) {
   if (!flags.allowTmuxDaemon) {
-    throw new Error("start-tmux daemon mode is retired: iMessage/background/orchestrator must run as a direct LaunchAgent outside tmux. Use `relaymux restart-launch-agent` for the background service and `relaymux launch` for feature tmux sessions.");
+    throw new Error("start-tmux daemon mode is retired: iMessage/background/orchestrator must run as a direct LaunchAgent outside tmux. Use `relaymux restart-launch-agent` for the background service and `relaymux launch` for agent tmux tabs.");
   }
   if (!flags.session) {
     throw new Error("Missing --session <name> for start-tmux");
@@ -583,10 +583,10 @@ function handleStatus(flags, configInfo, stateDir, io) {
       : `LaunchAgent ${launchAgent.label} not loaded`
     : `LaunchAgent unsupported on ${process.platform}`;
   io.stdout.write(`Background service: ${daemon.enabled ? "enabled" : "disabled"}; mode ${daemon.launchMode}/background (no tmux); ${launchAgentText}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}\n`);
-  io.stdout.write(`Feature tmux: session mode ${daemon.featureSessionMode}; ${session ? `filter session ${session}` : "showing all relaymux-managed sessions"}; tabs are tmux windows, never panes/splits.\n`);
+  io.stdout.write(`Agent tmux: session mode ${daemon.agentSessionMode}; ${session ? `filter session ${session}` : "showing all relaymux-managed sessions"}; tabs are tmux windows, never panes/splits.\n`);
 
   if (rows.length === 0) {
-    io.stdout.write(flags.history ? "No relaymux runs found.\n" : "No relaymux feature tabs found. Use --history to include old run records.\n");
+    io.stdout.write(flags.history ? "No relaymux runs found.\n" : "No relaymux agent tabs found. Use --history to include old run records.\n");
     return 0;
   }
 
@@ -595,11 +595,13 @@ function handleStatus(flags, configInfo, stateDir, io) {
 }
 
 function daemonStatus(config, configPath) {
+  const agentSessionMode = resolveTmuxSessionMode({ config });
   return {
     enabled: config.daemon?.enabled !== false,
     configPath,
     launchMode: "direct",
-    featureSessionMode: resolveTmuxSessionMode({ config }),
+    agentSessionMode,
+    featureSessionMode: agentSessionMode,
     webhook: webhookStatus(config),
     launchAgentPath: launchAgentPath(config),
     launchAgent: getLaunchAgentStatus(config),
@@ -781,8 +783,8 @@ function helpText() {
 
 Mental model:
   - iMessage/background/orchestrator runs as a direct macOS LaunchAgent outside tmux.
-  - Each worktree/task group gets its own tmux session by default.
-  - Agents in a task group appear as tmux tabs/windows, never panes/splits.
+  - By default, all agents open as tmux tabs/windows in one shared session.
+  - Use --session only when you explicitly want a separate/new/named tmux session; panes/splits are never used.
 
 Start here:
   relaymux setup
@@ -813,8 +815,8 @@ Setup/init options:
 
 Launch options:
   --prompt-file <path>       Read prompt from a file
-  --session <name>           Explicitly group this agent into a tmux task session
-  --session-mode <mode>      per-worktree (default) or shared
+  --session <name>           Explicitly launch this agent into a separate/named tmux session
+  --session-mode <mode>      shared (default) or per-worktree
   --worktree <path>          Launch from a generic git worktree path
   --create-worktree          Create --worktree with git worktree add when missing
   --worktree-branch <name>   Branch name to use with --create-worktree/session naming
@@ -839,8 +841,8 @@ Request/notify/status options:
   --history                  For status: include old run records whose tmux tabs are gone
 
 Useful commands:
-  tmux attach -t <feature-session>       attach to a feature/task session
-  tmux kill-session -t <feature-session> kill only that feature session; background iMessage keeps running
+  tmux attach -t <session>       attach to the shared or named agent session
+  tmux kill-session -t <session> kill only that tmux session; background iMessage keeps running
 
 Config defaults to ${defaultConfigPath()}.
 `;
