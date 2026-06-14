@@ -4,7 +4,8 @@ import http from "node:http";
 import path from "node:path";
 
 import { ensureDirectory } from "./paths.js";
-import { resolveTokenFile } from "./config.js";
+import { defaultReplyModeForConfig, resolveTokenFile } from "./config.js";
+import { isReplyMode, replyModesText } from "./reply-modes.js";
 
 export function webhookConfig(config) {
   const daemon = config.daemon || {};
@@ -57,7 +58,7 @@ export function ensureWebhookToken(tokenFile) {
   return token;
 }
 
-export function normalizeCompletionBody(body, requestId, receivedAt = new Date().toISOString()) {
+export function normalizeCompletionBody(body, requestId, receivedAt = new Date().toISOString(), defaultReplyMode = "imessage") {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw httpError(400, "JSON object body is required");
 
   const rawText = body.text ?? body.message;
@@ -66,8 +67,8 @@ export function normalizeCompletionBody(body, requestId, receivedAt = new Date()
   const metadata = body.metadata === undefined ? {} : body.metadata;
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) throw httpError(400, "metadata must be an object when provided");
 
-  const replyMode = body.replyMode === undefined ? "imessage" : String(body.replyMode);
-  if (!["imessage", "none"].includes(replyMode)) throw httpError(400, "replyMode must be imessage or none");
+  const replyMode = body.replyMode === undefined ? defaultReplyMode : String(body.replyMode);
+  if (!isReplyMode(replyMode)) throw httpError(400, `replyMode must be ${replyModesText()}`);
 
   const rawSource = body.from ?? body.source ?? "local-subagent";
   const source = String(rawSource || "local-subagent").slice(0, 200);
@@ -98,7 +99,7 @@ export function normalizeTerminalRequestBody(body, requestId, receivedAt = new D
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) throw httpError(400, "metadata must be an object when provided");
 
   const replyMode = body.replyMode === undefined ? "none" : String(body.replyMode);
-  if (!["imessage", "none"].includes(replyMode)) throw httpError(400, "replyMode must be imessage or none");
+  if (!isReplyMode(replyMode)) throw httpError(400, `replyMode must be ${replyModesText()}`);
 
   const rawSource = body.from ?? body.source ?? "terminal";
   const source = String(rawSource || "terminal").slice(0, 200);
@@ -189,7 +190,7 @@ export async function createCompletionWebhookServer({ config, state, saveState, 
         }
 
         const requestId = makeRequestId("wh");
-        const job = normalizeCompletionBody(body, requestId);
+        const job = normalizeCompletionBody(body, requestId, new Date().toISOString(), defaultReplyModeForConfig(config));
         if (job.idempotencyKey) {
           const result = rememberWebhookIdempotencyKey(state, job.idempotencyKey);
           if (result.duplicate) {

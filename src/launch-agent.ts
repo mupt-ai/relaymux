@@ -297,7 +297,7 @@ function resolveLaunchMode(flags, config) {
   const rawMode = String(explicitMode || config.daemon?.launchMode || "direct");
   const mode = rawMode === "background" ? "direct" : rawMode;
   if (explicitMode && !["direct", "background"].includes(String(explicitMode))) {
-    throw new Error("LaunchAgent tmux mode has been removed. The background iMessage/orchestrator service must run direct; use start-tmux only for legacy manual debugging.");
+    throw new Error("LaunchAgent tmux mode has been removed. The relaymux background service must run direct; use start-tmux only for legacy manual debugging.");
   }
   if (["direct", "tmux", "supervised-tmux"].includes(mode)) {
     return "direct";

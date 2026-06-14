@@ -1,7 +1,7 @@
 import readline from "node:readline/promises";
 import path from "node:path";
 
-import { defaultConfig } from "./config.js";
+import { defaultConfig, defaultImessageIntegration } from "./config.js";
 import { findExecutable } from "./doctor.js";
 import { expandPath } from "./paths.js";
 import { runCommand } from "./process.js";
@@ -22,30 +22,38 @@ export function buildImsgConfig(options: any = {}, env = process.env) {
     ...base,
     session: options.session || base.session,
     stateDir,
-    imessage: {
-      ...base.imessage,
-      chatId,
-      recipient: options.recipient || "",
-      pollMs: Number(options.pollMs || base.imessage.pollMs),
-      syncLimit: Number(options.syncLimit || 10),
-      receive: {
-        backend: "command",
-        command: {
-          description: "Read recent Messages.app chat history through imsg.",
-          argv: [imsg, "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--attachments", "--convert-attachments", "--json"],
-          cwd,
-          timeoutMs: 30000,
+    integrations: {
+      ...base.integrations,
+      imessage: {
+        ...defaultImessageIntegration(),
+        enabled: true,
+        chatId,
+        recipient: options.recipient || "",
+        pollMs: Number(options.pollMs || 3000),
+        syncLimit: Number(options.syncLimit || 10),
+        receive: {
+          backend: "command",
+          command: {
+            description: "Read recent Messages.app chat history through imsg.",
+            argv: [imsg, "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--attachments", "--convert-attachments", "--json"],
+            cwd,
+            timeoutMs: 30000,
+          },
+        },
+        send: {
+          backend: "command",
+          command: {
+            description: "Send one reply chunk through imsg.",
+            argv: [imsg, "send", "--chat-id", "{chatId}", "--text", "{text}", "--json"],
+            cwd,
+            timeoutMs: 60000,
+          },
         },
       },
-      send: {
-        backend: "command",
-        command: {
-          description: "Send one reply chunk through imsg.",
-          argv: [imsg, "send", "--chat-id", "{chatId}", "--text", "{text}", "--json"],
-          cwd,
-          timeoutMs: 60000,
-        },
-      },
+    },
+    launchNotifications: {
+      ...base.launchNotifications,
+      replyMode: "imessage",
     },
     daemon: {
       ...base.daemon,

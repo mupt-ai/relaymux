@@ -1,7 +1,7 @@
 {
   "name": "relaymux",
   "version": "0.1.0",
-  "description": "Orchestrate local CLI agents in tmux and receive async iMessage/SMS completions.",
+  "description": "Coordinate local CLI agents in tmux with a local API and optional notification adapters.",
   "type": "module",
   "scripts": {
     "build": "tsc && node -e \"require('fs').chmodSync('dist/bin/relaymux.js', 0o755)\"",
@@ -11,8 +11,10 @@
   },
   "keywords": [
     "agents",
-    "imessage",
     "tmux",
+    "webhook",
+    "telegram",
+    "imessage",
     "orchestration",
     "cli"
   ],

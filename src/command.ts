@@ -1,3 +1,5 @@
+import { isReplyMode, replyModesText } from "./reply-modes.js";
+
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const SAFE_SHELL_TOKEN = /^[A-Za-z0-9_/:=@%+.,-]+$/;
 
@@ -178,15 +180,15 @@ function buildExitNotificationBlock(notifyBase, notification) {
 
 function normalizeLaunchNotification(notification: any = {}) {
   const onExit = notification.onExit || "never";
-  const replyMode = notification.replyMode || "imessage";
+  const replyMode = notification.replyMode || "none";
   const tailLines = normalizePositiveInteger(notification.tailLines, 80);
   const tailBytes = normalizePositiveInteger(notification.tailBytes, 4000);
 
   if (!["never", "failure", "always"].includes(onExit)) {
     throw new Error(`launchNotifications.onExit must be never, failure, or always (got ${JSON.stringify(onExit)})`);
   }
-  if (!["imessage", "none"].includes(replyMode)) {
-    throw new Error(`launchNotifications.replyMode must be imessage or none (got ${JSON.stringify(replyMode)})`);
+  if (!isReplyMode(replyMode)) {
+    throw new Error(`launchNotifications.replyMode must be ${replyModesText()} (got ${JSON.stringify(replyMode)})`);
   }
 
   return { onExit, replyMode, tailLines, tailBytes };

@@ -12,7 +12,7 @@ export function buildIncomingOrchestratorPrompt({ config, configPath, incomingTe
   return buildFullPrompt({
     config,
     configPath,
-    title: "Incoming iMessage/SMS turn",
+    title: "Incoming iMessage/SMS adapter turn",
     body: incomingText,
   });
 }
@@ -22,9 +22,9 @@ export function buildWebhookOrchestratorPrompt({ config, configPath, job }) {
     ? `\nMetadata JSON:\n${JSON.stringify(job.metadata, null, 2)}`
     : "";
   const idempotencyText = job.idempotencyKey ? `\nIdempotency key: ${job.idempotencyKey}` : "";
-  const replyInstruction = job.replyMode === "imessage"
-    ? "Reply mode is imessage: produce one concise user-visible text-message update. Avoid spam and mention only meaningful completion, failure, or blockers."
-    : "Reply mode is none: process this local update as context only. The daemon will not text the user, so return a short internal acknowledgement.";
+  const replyInstruction = job.replyMode === "none"
+    ? "Reply mode is none: process this local update as context only. The daemon will not send a user-visible adapter message, so return a short internal acknowledgement."
+    : `Reply mode is ${job.replyMode}: produce one concise user-visible adapter update. Avoid spam and mention only meaningful completion, failure, or blockers.`;
 
   return buildFullPrompt({
     config,
@@ -38,9 +38,9 @@ export function buildTerminalOrchestratorPrompt({ config, configPath, job }) {
   const metadataText = Object.keys(job.metadata || {}).length
     ? `\nMetadata JSON:\n${JSON.stringify(job.metadata, null, 2)}`
     : "";
-  const replyInstruction = job.replyMode === "imessage"
-    ? "Reply mode is imessage: do the requested work, then produce one concise user-visible text-message status. The daemon will also return the same text to the terminal command."
-    : "Reply mode is none: do the requested work and return one concise terminal-visible status. The daemon will not text the user.";
+  const replyInstruction = job.replyMode === "none"
+    ? "Reply mode is none: do the requested work and return one concise terminal-visible status. The daemon will not send an adapter message."
+    : `Reply mode is ${job.replyMode}: do the requested work, then produce one concise user-visible adapter status. The daemon will also return the same text to the terminal command.`;
 
   return buildFullPrompt({
     config,
