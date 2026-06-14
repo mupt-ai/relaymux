@@ -12,7 +12,7 @@ export function buildIncomingOrchestratorPrompt({ config, configPath, incomingTe
   return buildFullPrompt({
     config,
     configPath,
-    title: "Incoming iMessage/SMS turn",
+    title: "Incoming iMessage/SMS adapter turn",
     body: incomingText,
   });
 }
@@ -22,9 +22,9 @@ export function buildWebhookOrchestratorPrompt({ config, configPath, job }) {
     ? `\nMetadata JSON:\n${JSON.stringify(job.metadata, null, 2)}`
     : "";
   const idempotencyText = job.idempotencyKey ? `\nIdempotency key: ${job.idempotencyKey}` : "";
-  const replyInstruction = job.replyMode === "imessage"
-    ? "Reply mode is imessage: produce one concise user-visible text-message update. Avoid spam and mention only meaningful completion, failure, or blockers."
-    : "Reply mode is none: process this local update as context only. The daemon will not text the user, so return a short internal acknowledgement.";
+  const replyInstruction = job.replyMode === "none"
+    ? "Reply mode is none: process this local update as context only. The daemon will not send a user-visible adapter message, so return a short internal acknowledgement."
+    : `Reply mode is ${job.replyMode}: produce one concise user-visible adapter update. Avoid spam and mention only meaningful completion, failure, or blockers.`;
 
   return buildFullPrompt({
     config,
@@ -38,9 +38,9 @@ export function buildTerminalOrchestratorPrompt({ config, configPath, job }) {
   const metadataText = Object.keys(job.metadata || {}).length
     ? `\nMetadata JSON:\n${JSON.stringify(job.metadata, null, 2)}`
     : "";
-  const replyInstruction = job.replyMode === "imessage"
-    ? "Reply mode is imessage: do the requested work, then produce one concise user-visible text-message status. The daemon will also return the same text to the terminal command."
-    : "Reply mode is none: do the requested work and return one concise terminal-visible status. The daemon will not text the user.";
+  const replyInstruction = job.replyMode === "none"
+    ? "Reply mode is none: do the requested work and return one concise terminal-visible status. The daemon will not send an adapter message."
+    : `Reply mode is ${job.replyMode}: do the requested work, then produce one concise user-visible adapter status. The daemon will also return the same text to the terminal command.`;
 
   return buildFullPrompt({
     config,
@@ -106,6 +106,10 @@ export async function runOrchestrator(config, { prompt, stateDir, configPath, re
     env,
     input,
     timeoutMs: Number(orchestrator.timeoutMs || 0),
+    timeoutMode: orchestrator.timeoutMode || "activity",
+    hardTimeoutMs: Number(orchestrator.hardTimeoutMs || 0),
+    activityCheckIntervalMs: Number(orchestrator.activityCheckIntervalMs || 0),
+    activityPaths: resolveOrchestratorActivityPaths(invocation.argv),
     maxBuffer: Number(orchestrator.maxBufferBytes || 10 * 1024 * 1024),
   });
 
@@ -131,6 +135,37 @@ function sanitizeFilePart(value) {
 
 function makeRequestId() {
   return `orch-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+}
+
+function resolveOrchestratorActivityPaths(argv) {
+  const paths = [];
+  for (let index = 0; index < argv.length - 1; index += 1) {
+    const value = String(argv[index + 1] || "");
+    if (argv[index] === "--session" && (value.includes("/") || value.endsWith(".jsonl"))) {
+      paths.push(expandPath(value));
+    }
+    if (argv[index] === "--session-dir") {
+      const latest = latestJsonlFile(expandPath(value));
+      if (latest) paths.push(latest);
+    }
+  }
+  return Array.from(new Set(paths));
+}
+
+function latestJsonlFile(dir) {
+  try {
+    let latest = null;
+    for (const entry of fs.readdirSync(dir)) {
+      if (!entry.endsWith(".jsonl")) continue;
+      const file = path.join(dir, entry);
+      const stat = fs.statSync(file);
+      if (!stat.isFile()) continue;
+      if (!latest || stat.mtimeMs > latest.mtimeMs) latest = { file, mtimeMs: stat.mtimeMs };
+    }
+    return latest?.file || null;
+  } catch {
+    return null;
+  }
 }
 
 function formatHostForUrl(host) {

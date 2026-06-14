@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { defaultConfig } from "../src/config.js";
-import { installLaunchAgent, parseLaunchCtlPrint, renderLaunchAgentPlist } from "../src/launch-agent.js";
+import {
+  installLaunchAgent,
+  isCurrentLaunchAgent,
+  parseLaunchCtlPrint,
+  renderLaunchAgentPlist,
+  renderLaunchAgentReloadScript,
+  renderLaunchAgentWatchdogPlist,
+  resolveWatchdogSourcePath,
+  shouldInstallWatchdog,
+} from "../src/launch-agent.js";
 
 
 test("renderLaunchAgentPlist escapes XML and includes daemon args", () => {
@@ -39,6 +48,60 @@ test("renderLaunchAgentPlist can include launch environment", () => {
   assert.match(plist, /<key>RELAYMUX_SESSION<\/key>/);
 });
 
+test("renderLaunchAgentPlist can include a start interval", () => {
+  const plist = renderLaunchAgentPlist({
+    label: "com.example.relaymux.watchdog",
+    programArguments: ["/bin/sh", "/tmp/watchdog.sh"],
+    workingDirectory: "/tmp/work",
+    standardOutPath: "/tmp/out.log",
+    standardErrorPath: "/tmp/err.log",
+    keepAlive: false,
+    startInterval: 60,
+  });
+
+  assert.match(plist, /<key>KeepAlive<\/key>\n  <false\/>/);
+  assert.match(plist, /<key>StartInterval<\/key>/);
+  assert.match(plist, /<integer>60<\/integer>/);
+});
+
+test("renderLaunchAgentWatchdogPlist points at the main daemon and health endpoint", () => {
+  const base = defaultConfig();
+  const config = {
+    ...base,
+    daemon: {
+      ...base.daemon,
+      launchAgentLabel: "com.example.relaymux",
+      port: 49999,
+      watchdog: { enabled: true, intervalSeconds: 45 },
+    },
+  };
+  const plist = renderLaunchAgentWatchdogPlist({
+    config,
+    configPath: "/tmp/relaymux-config.json",
+    scriptPath: "/tmp/watchdog.sh",
+  });
+
+  assert.match(plist, /<string>com.example.relaymux.watchdog<\/string>/);
+  assert.match(plist, /<string>\/tmp\/watchdog.sh<\/string>/);
+  assert.match(plist, /<key>RELAYMUX_MAIN_LABEL<\/key>/);
+  assert.match(plist, /<string>com.example.relaymux<\/string>/);
+  assert.match(plist, /<key>RELAYMUX_HEALTH_URL<\/key>/);
+  assert.match(plist, /http:\/\/127\.0\.0\.1:49999\/health/);
+  assert.match(plist, /<integer>45<\/integer>/);
+});
+
+test("watchdog install defaults on and can be disabled", () => {
+  const config = defaultConfig();
+  assert.equal(shouldInstallWatchdog(config, {}), true);
+  assert.equal(shouldInstallWatchdog(config, { watchdog: false }), false);
+  assert.equal(shouldInstallWatchdog({ ...config, daemon: { ...config.daemon, watchdog: { enabled: false } } }, {}), false);
+});
+
+test("resolveWatchdogSourcePath finds the checked-in script", () => {
+  const resolved = resolveWatchdogSourcePath("/tmp/nonexistent/dist/bin/relaymux.js");
+  assert.match(resolved, /scripts\/relaymux-launch-agent-watchdog\.sh$/);
+});
+
 test("installLaunchAgent direct dry-run does not invoke tmux or set tmux environment", () => {
   let stdout = "";
   const base = defaultConfig();
@@ -69,6 +132,36 @@ test("installLaunchAgent direct dry-run does not invoke tmux or set tmux environ
   assert.doesNotMatch(stdout, /<string>tmux<\/string>/);
   assert.doesNotMatch(stdout, /TMUX/);
   assert.doesNotMatch(stdout, /RELAYMUX_SESSION/);
+});
+
+test("isCurrentLaunchAgent detects inherited launchd service context", () => {
+  const config = {
+    ...defaultConfig(),
+    daemon: {
+      ...defaultConfig().daemon,
+      launchAgentLabel: "com.example.relaymux",
+    },
+  };
+
+  assert.equal(isCurrentLaunchAgent(config, { XPC_SERVICE_NAME: "com.example.relaymux" }), true);
+  assert.equal(isCurrentLaunchAgent(config, { XPC_SERVICE_NAME: "com.example.other" }), false);
+});
+
+test("renderLaunchAgentReloadScript bootouts and bootstraps the main service", () => {
+  const script = renderLaunchAgentReloadScript({
+    delaySeconds: 15,
+    domain: "gui/501",
+    helperPlistPath: "/tmp/helper.plist",
+    helperTarget: "gui/501/com.example.relaymux.reload.1",
+    plistPath: "/tmp/main.plist",
+    scriptPath: "/tmp/helper.sh",
+    target: "gui/501/com.example.relaymux",
+  });
+
+  assert.match(script, /sleep 15/);
+  assert.match(script, /launchctl bootout gui\/501\/com.example.relaymux/);
+  assert.match(script, /launchctl bootstrap gui\/501 \/tmp\/main.plist/);
+  assert.match(script, /com.example.relaymux.reload.1/);
 });
 
 test("parseLaunchCtlPrint extracts running status", () => {

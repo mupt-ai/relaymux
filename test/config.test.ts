@@ -15,12 +15,32 @@ test("writeDefaultConfig creates a loadable config", () => {
 
   assert.equal(exists, true);
   assert.equal(config.session, "agents");
-  assert.equal(config.imessage.receive.backend, "command");
+  assert.equal(config.integrations.imessage, undefined);
+  assert.equal(config.launchNotifications.replyMode, "none");
   assert.equal(config.daemon.host, "127.0.0.1");
   assert.equal(config.daemon.launchMode, "direct");
   assert.equal(config.tmux.sessionMode, "shared");
   assert.ok(config.orchestrator.command);
   assert.ok(config.agents.codex);
+  assert.equal(config.agents.codex.command.includes("--reasoning-effort"), false);
+  assert.equal(config.launchNotifications.onExit, "never");
+});
+
+test("loadConfig treats legacy top-level imessage as enabled integration", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-imsg-alias-"));
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    imessage: {
+      chatId: "chat-1",
+      send: { command: { argv: ["imsg", "send", "--chat-id", "{chatId}", "--text", "{text}"] } },
+    },
+  }));
+
+  const { config } = loadConfig({ configPath });
+
+  assert.equal(config.integrations.imessage.enabled, true);
+  assert.equal(config.integrations.imessage.chatId, "chat-1");
+  assert.equal(config.launchNotifications.replyMode, "imessage");
 });
 
 test("default paths live under RELAYMUX_HOME when provided", () => {

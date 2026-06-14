@@ -19,8 +19,10 @@ const BOOLEAN_FLAGS = new Set([
   "print-command",
   "restart",
   "symlink",
+  "telegram",
   "version",
   "wait",
+  "watchdog",
 ]);
 
 export function parseArgv(argv) {

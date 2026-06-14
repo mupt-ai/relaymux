@@ -1,9 +1,11 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
-import { defaultConfigPath, legacyDefaultConfigPath, resolveLogDir, resolveStateDir } from "./config.js";
+import { defaultConfigPath, getIntegration, isIntegrationEnabled, legacyDefaultConfigPath, resolveLogDir, resolveStateDir } from "./config.js";
+import { validateConfiguredAgentCommand } from "./command-validation.js";
 import { runCommand } from "./process.js";
-import { launchAgentPath } from "./launch-agent.js";
+import { getLaunchAgentStatus, getLaunchAgentWatchdogStatus, launchAgentPath, launchAgentWatchdogPath } from "./launch-agent.js";
 import { defaultRelaymuxHome } from "./paths.js";
 import { webhookStatus } from "./webhook.js";
 
@@ -84,11 +86,25 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
   }
 
   checks.push(commandCheck("orchestrator", config.orchestrator?.command?.[0], env));
-  if (config.imessage?.receive?.backend === "command") {
-    checks.push(commandCheck("message-receive", config.imessage.receive.command?.argv?.[0], env));
+
+  const imessage = getIntegration(config, "imessage");
+  if (isIntegrationEnabled(config, "imessage")) {
+    if (imessage.receive?.backend === "command" && imessage.receive?.enabled !== false) {
+      checks.push(commandCheck("imessage-receive", imessage.receive.command?.argv?.[0], env));
+    }
+    if (imessage.send?.backend === "command" && imessage.send?.enabled !== false) {
+      checks.push(commandCheck("imessage-send", imessage.send.command?.argv?.[0], env));
+    }
   }
-  if (config.imessage?.send?.backend === "command") {
-    checks.push(commandCheck("message-send", config.imessage.send.command?.argv?.[0], env));
+
+  const telegram = getIntegration(config, "telegram");
+  if (isIntegrationEnabled(config, "telegram")) {
+    checks.push({
+      name: "telegram-chat-id",
+      ok: Boolean(String(telegram.chatId || "").trim()) && telegram.chatId !== "TELEGRAM_CHAT_ID",
+      detail: telegram.chatId && telegram.chatId !== "TELEGRAM_CHAT_ID" ? "configured" : "missing config.integrations.telegram.chatId",
+    });
+    checks.push(telegramTokenCheck(telegram, env));
   }
 
   const webhook = webhookStatus(config);
@@ -97,11 +113,29 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
     ok: !webhook.tokenFileExists || webhook.tokenFileMode === "0600",
     detail: webhook.tokenFileExists ? `${webhook.tokenFile} mode ${webhook.tokenFileMode}` : `will be created at ${webhook.tokenFile}`,
   });
+  const launchAgent: any = getLaunchAgentStatus(config);
+  const daemonEnabled = config.daemon?.enabled !== false;
   checks.push({
     name: "background-service",
-    ok: true,
-    detail: `direct/background LaunchAgent outside tmux: ${launchAgentPath(config)}`,
+    ok: !daemonEnabled || !launchAgent.supported || launchAgent.loaded,
+    detail: daemonEnabled
+      ? launchAgent.supported
+        ? `direct/background LaunchAgent ${launchAgent.loaded ? "loaded" : "not loaded"}: ${launchAgentPath(config)}${launchAgent.detail ? ` (${launchAgent.detail})` : ""}`
+        : `direct/background LaunchAgent unsupported on ${process.platform}: ${launchAgentPath(config)}`
+      : "disabled in config",
   });
+
+  const watchdog: any = getLaunchAgentWatchdogStatus(config);
+  if (daemonEnabled && watchdog.enabled) {
+    checks.push({
+      name: "background-watchdog",
+      ok: !watchdog.supported || watchdog.loaded,
+      fatal: false,
+      detail: watchdog.supported
+        ? `watchdog LaunchAgent ${watchdog.loaded ? "loaded" : "not loaded"}: ${launchAgentWatchdogPath(config)}; interval ${watchdog.intervalSeconds}s`
+        : `watchdog LaunchAgent unsupported on ${process.platform}: ${launchAgentWatchdogPath(config)}`,
+    });
+  }
 
   for (const [name, agent] of Object.entries((config.agents ?? {}) as Record<string, any>)) {
     const command = Array.isArray(agent.command) ? agent.command[0] : "";
@@ -109,8 +143,28 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
     checks.push({
       name: `agent:${name}`,
       ok: Boolean(executable),
+      fatal: false,
       detail: executable || `${command || "missing command"} not found on PATH`,
     });
+
+    const findings = validateConfiguredAgentCommand(name, agent, { location: `agents.${name}` });
+    if (findings.length === 0) {
+      checks.push({
+        name: `agent:${name}-command`,
+        ok: true,
+        detail: "command template passed static checks",
+      });
+    } else {
+      for (const finding of findings) {
+        checks.push({
+          name: `agent:${name}-command`,
+          ok: false,
+          severity: finding.severity,
+          fatal: finding.fatal,
+          detail: finding.detail,
+        });
+      }
+    }
   }
 
   return checks;
@@ -123,4 +177,42 @@ function commandCheck(name, command, env) {
     ok: Boolean(executable),
     detail: executable || `${command || "missing command"} not found on PATH`,
   };
+}
+
+function telegramTokenCheck(telegram, env) {
+  const tokenEnv = String(telegram.botTokenEnv || "").trim();
+  if (tokenEnv && env[tokenEnv]) {
+    return { name: "telegram-token", ok: true, detail: `env ${tokenEnv} is set` };
+  }
+
+  const tokenFile = String(telegram.botTokenFile || "").trim();
+  if (tokenFile) {
+    const file = expandHome(tokenFile, env);
+    try {
+      const stat = fs.statSync(file);
+      const mode = stat.mode & 0o777;
+      const hasToken = Boolean(fs.readFileSync(file, "utf8").trim());
+      return {
+        name: "telegram-token",
+        ok: stat.isFile() && hasToken && (mode & 0o077) === 0,
+        detail: `${file} mode 0${mode.toString(8)}${hasToken ? "" : " (empty)"}`,
+      };
+    } catch {
+      return { name: "telegram-token", ok: false, detail: `token file missing: ${file}` };
+    }
+  }
+
+  return {
+    name: "telegram-token",
+    ok: false,
+    detail: tokenEnv ? `env ${tokenEnv} is not set` : "missing botTokenEnv or botTokenFile",
+  };
+}
+
+function expandHome(value, env) {
+  const text = String(value || "");
+  const home = env.HOME || process.env.HOME || os.homedir();
+  if (text === "~") return home;
+  if (text.startsWith("~/")) return path.join(home, text.slice(2));
+  return text;
 }

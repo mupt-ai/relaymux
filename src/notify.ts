@@ -5,6 +5,7 @@ import { renderTemplate } from "./command.js";
 import { runCommand } from "./process.js";
 import { formatHostForUrl, webhookConfig } from "./webhook.js";
 import { expandPath } from "./paths.js";
+import { isReplyMode, replyModesText } from "./reply-modes.js";
 
 export async function handleNotify({ flags, positionals, config, stateDir, io }) {
   const runId = flags.runId || process.env.RELAYMUX_RUN_ID;
@@ -89,8 +90,8 @@ async function postCompletionWebhook(config, flags, event) {
   if (!event.message?.trim()) {
     throw new Error("Missing --message/--text for daemon completion webhook");
   }
-  if (!["imessage", "none"].includes(event.replyMode)) {
-    throw new Error("--reply-mode must be imessage or none");
+  if (!isReplyMode(event.replyMode)) {
+    throw new Error(`--reply-mode must be ${replyModesText()}`);
   }
 
   const resolved = webhookConfig(config);

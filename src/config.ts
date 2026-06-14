@@ -4,6 +4,48 @@ import path from "node:path";
 
 import { defaultRelaymuxHome, defaultRelaymuxHomeConfigValue, expandPath } from "./paths.js";
 
+export function defaultImessageIntegration() {
+  return {
+    enabled: false,
+    chatId: "",
+    recipient: "",
+    pollMs: 3000,
+    syncLimit: 5,
+    maxReplyChars: 1400,
+    receive: {
+      backend: "command",
+      command: {
+        description: "Command must print recent messages as JSON/JSONL. This imsg example is a placeholder.",
+        argv: ["imsg", "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--json"],
+        cwd: "~",
+        timeoutMs: 30000,
+      },
+    },
+    send: {
+      backend: "command",
+      command: {
+        description: "Command sends one text chunk. This imsg example is a placeholder.",
+        argv: ["imsg", "send", "--chat-id", "{chatId}", "--text", "{text}", "--json"],
+        cwd: "~",
+        timeoutMs: 60000,
+      },
+    },
+  };
+}
+
+export function defaultTelegramIntegration() {
+  return {
+    enabled: false,
+    chatId: "",
+    botTokenEnv: "TELEGRAM_BOT_TOKEN",
+    botTokenFile: "",
+    parseMode: "",
+    apiBaseUrl: "https://api.telegram.org",
+    timeoutMs: 30000,
+    maxMessageChars: 3900,
+  };
+}
+
 export function defaultConfig(env = process.env) {
   const homeDir = defaultRelaymuxHomeConfigValue(env);
   const stateDir = path.posix.join(homeDir, "state");
@@ -20,31 +62,13 @@ export function defaultConfig(env = process.env) {
       sessionPrefix: "rmx",
       extraWindows: [],
     },
-    imessage: {
-      chatId: "CHAT_ID_OR_PHONE",
-      recipient: "+15555550123",
-      pollMs: 3000,
-      syncLimit: 5,
-      maxReplyChars: 1400,
-      receive: {
-        backend: "command",
-        command: {
-          description: "Command must print recent messages as JSON/JSONL. This imsg example is a placeholder.",
-          argv: ["imsg", "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--json"],
-          cwd: "~",
-          timeoutMs: 30000,
-        },
-      },
-      send: {
-        backend: "command",
-        command: {
-          description: "Command sends one text chunk. This imsg example is a placeholder.",
-          argv: ["imsg", "send", "--chat-id", "{chatId}", "--text", "{text}", "--json"],
-          cwd: "~",
-          timeoutMs: 60000,
-        },
-      },
+    launchNotifications: {
+      onExit: "never",
+      replyMode: "none",
+      tailLines: 80,
+      tailBytes: 4000,
     },
+    integrations: {},
     daemon: {
       enabled: true,
       host: "127.0.0.1",
@@ -54,6 +78,11 @@ export function defaultConfig(env = process.env) {
       launchAgentLabel: "com.relaymux.daemon",
       launchMode: "direct",
       supervisorPollMs: 15000,
+      selfRestartDelayMs: 30000,
+      watchdog: {
+        enabled: true,
+        intervalSeconds: 60,
+      },
       logDir,
     },
     orchestrator: {
@@ -62,6 +91,8 @@ export function defaultConfig(env = process.env) {
       command: ["pi", "{prompt}"],
       promptMode: "arg",
       timeoutMs: 0,
+      timeoutMode: "activity",
+      hardTimeoutMs: 0,
       maxBufferBytes: 10 * 1024 * 1024,
       systemPromptFile: "",
       extraSystemPrompt: "",
@@ -73,8 +104,8 @@ export function defaultConfig(env = process.env) {
         promptMode: "arg",
       },
       codex: {
-        description: "Codex CLI template with model/effort flags. Edit flags to match your local install.",
-        command: ["codex", "--model", "gpt-5.5", "--reasoning-effort", "xhigh", "{prompt}"],
+        description: "Codex CLI template. Edit flags to match your local install.",
+        command: ["codex", "{prompt}"],
         promptMode: "arg",
       },
       claude: {
@@ -175,6 +206,30 @@ export function resolveTokenFile(config, env = process.env) {
   return expandPath(config.daemon?.tokenFile || defaultConfig(env).daemon.tokenFile);
 }
 
+export function getIntegration(config, name) {
+  const raw = integrationOverride(config, name);
+  const defaults = name === "imessage"
+    ? defaultImessageIntegration()
+    : name === "telegram"
+      ? defaultTelegramIntegration()
+      : { enabled: false };
+  const merged = mergeConfig(defaults, raw || {});
+  if (raw && !Object.prototype.hasOwnProperty.call(raw, "enabled")) {
+    merged.enabled = true;
+  }
+  return merged;
+}
+
+export function isIntegrationEnabled(config, name) {
+  return getIntegration(config, name).enabled === true;
+}
+
+export function defaultReplyModeForConfig(config) {
+  if (isIntegrationEnabled(config, "imessage")) return "imessage";
+  if (isIntegrationEnabled(config, "telegram")) return "telegram";
+  return "none";
+}
+
 function normalizeConfig(config, override) {
   if (!isPlainObject(override)) {
     return config;
@@ -190,7 +245,42 @@ function normalizeConfig(config, override) {
     }
   }
 
+  config.integrations = config.integrations || {};
+
+  if (hasOwnPath(override, ["integrations", "imessage"])) {
+    config.integrations.imessage = normalizeIntegration(defaultImessageIntegration(), override.integrations.imessage);
+  } else if (hasOwnPath(override, ["imessage"])) {
+    config.integrations.imessage = normalizeIntegration(defaultImessageIntegration(), override.imessage);
+  }
+
+  if (hasOwnPath(override, ["integrations", "telegram"])) {
+    config.integrations.telegram = normalizeIntegration(defaultTelegramIntegration(), override.integrations.telegram);
+  }
+
+  if (hasOwnPath(override, ["imessage"]) && config.integrations.imessage?.enabled && !hasOwnPath(override, ["launchNotifications", "replyMode"])) {
+    config.launchNotifications = config.launchNotifications || {};
+    config.launchNotifications.replyMode = "imessage";
+  }
+
   return config;
+}
+
+function normalizeIntegration(defaults, override) {
+  if (override === false) return { ...defaults, enabled: false };
+  const raw = isPlainObject(override) ? override : {};
+  const normalized = mergeConfig(defaults, raw);
+  if (!Object.prototype.hasOwnProperty.call(raw, "enabled")) {
+    normalized.enabled = true;
+  } else {
+    normalized.enabled = raw.enabled === true;
+  }
+  return normalized;
+}
+
+function integrationOverride(config, name) {
+  if (hasOwnPath(config, ["integrations", name])) return config.integrations[name];
+  if (name === "imessage" && hasOwnPath(config, ["imessage"])) return config.imessage;
+  return null;
 }
 
 function mergeConfig(base, override) {

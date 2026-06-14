@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { defaultConfig } from "../src/config.js";
 import {
   buildAdapterArgv,
+  commandSafeMessageText,
   formatIncomingForPrompt,
   isIncomingUserMessage,
   normalizeMessages,
   parseMessageOutput,
+  receiveMessages,
   splitMessage,
 } from "../src/message-io.js";
 
@@ -39,10 +42,19 @@ test("buildAdapterArgv renders command placeholders", () => {
   );
 });
 
+test("commandSafeMessageText protects dash-leading replies from option parsing", () => {
+  assert.equal(commandSafeMessageText("hello"), "hello");
+  assert.equal(commandSafeMessageText("- bullet"), "\u200B- bullet");
+});
+
 test("formatIncomingForPrompt is generic", () => {
   const text = formatIncomingForPrompt([{ id: "m1", text: "do the thing", isFromMe: false }]);
-  assert.match(text, /configured chat/);
+  assert.match(text, /configured iMessage\/SMS adapter chat/);
   assert.doesNotMatch(text, /Avyay|Dari/);
+});
+
+test("receiveMessages is a no-op when iMessage adapter is disabled", async () => {
+  assert.deepEqual(await receiveMessages(defaultConfig({ PATH: "" })), []);
 });
 
 test("splitMessage chunks long text", () => {

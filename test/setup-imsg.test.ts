@@ -16,14 +16,15 @@ test("buildImsgConfig creates usable imsg defaults", () => {
   }, { PATH: "" });
 
   assert.equal(config.session, "work");
-  assert.equal(config.imessage.chatId, "chat-1");
-  assert.deepEqual(config.imessage.receive.command.argv.slice(0, 4), [
+  assert.equal(config.integrations.imessage.enabled, true);
+  assert.equal(config.integrations.imessage.chatId, "chat-1");
+  assert.deepEqual(config.integrations.imessage.receive.command.argv.slice(0, 4), [
     "/usr/local/bin/imsg",
     "history",
     "--chat-id",
     "{chatId}",
   ]);
-  assert.deepEqual(config.imessage.send.command.argv.slice(0, 6), [
+  assert.deepEqual(config.integrations.imessage.send.command.argv.slice(0, 6), [
     "/usr/local/bin/imsg",
     "send",
     "--chat-id",
@@ -41,6 +42,7 @@ test("buildImsgConfig creates usable imsg defaults", () => {
   ]);
   assert.equal(config.daemon.tokenFile, "~/.state/relaymux-test/webhook-token");
   assert.equal(config.daemon.port, 49999);
+  assert.equal(config.agents.codex.command.includes("--reasoning-effort"), false);
 });
 
 test("formatChat shows id and label", () => {
