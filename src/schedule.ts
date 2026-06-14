@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { quoteArgv } from "./command.js";
+import { quoteArgv, shellQuote } from "./command.js";
 import { resolveLogDir } from "./config.js";
 import {
   defaultLaunchPath,
@@ -17,6 +17,7 @@ import { isReplyMode, replyModesText } from "./reply-modes.js";
 
 const MAX_SCHEDULE_NAME_LENGTH = 80;
 const MAX_CALENDAR_INTERVALS = 512;
+const SCHEDULE_BACKENDS = new Set(["auto", "launchd", "cron"]);
 
 const MONTH_NAMES = new Map([
   ["jan", 1],
@@ -87,7 +88,7 @@ Scheduled prompts use the OS scheduler to invoke relaymux locally. relaymux does
 not run a durable in-process scheduler loop.
 
 Usage:
-  relaymux schedule add --name <name> --prompt <text> --cron "0 9 * * *" [--reply-mode none|imessage|telegram]
+  relaymux schedule add --name <name> --prompt <text> --cron "0 9 * * *" [--reply-mode none|imessage|telegram] [--scheduler auto|launchd|cron]
   relaymux schedule add --name <name> --prompt-file <path> --cron "0 9 * * *" [--dry-run]
   relaymux schedule list [--json]
   relaymux schedule remove --name <name> [--dry-run]
@@ -98,14 +99,14 @@ Options:
   --prompt-file <path>   Read prompt text from a file and copy it into relaymux state
   --cron <expr>          Five-field cron expression, for example "0 9 * * *"
   --reply-mode <mode>    none, imessage, or telegram (default none)
-  --dry-run              Print generated files/plist without writing or loading launchd
-  --no-load              Write files but do not load the LaunchAgent
+  --scheduler <backend>  auto, launchd, or cron (default auto)
+  --dry-run              Print generated job without writing or installing it
+  --no-load              Write schedule files without installing/loading the OS job
   --json                 For list: print schedule metadata as JSON
 
-macOS installs use per-user launchd LaunchAgents. The scheduled job calls
-relaymux ask --no-wait, so the relaymux daemon must be running when the schedule fires.
-On non-macOS systems, use --dry-run to inspect the generated job; automatic install
-currently requires macOS launchd.
+auto uses per-user launchd LaunchAgents on macOS and cron elsewhere. The scheduled
+job calls relaymux ask --no-wait, so the relaymux daemon must be running when the
+schedule fires.
 `;
 }
 
@@ -120,6 +121,7 @@ function handleScheduleAdd({ flags, configInfo, stateDir, binPath, io }) {
     cron: flags.cron,
     prompt,
     replyMode: flags.replyMode,
+    scheduler: flags.scheduler,
     config: configInfo.config,
     configPath: configInfo.path,
     stateDir,
@@ -131,10 +133,6 @@ function handleScheduleAdd({ flags, configInfo, stateDir, binPath, io }) {
     return 0;
   }
 
-  if (process.platform !== "darwin") {
-    throw new Error("relaymux schedule add currently installs macOS launchd LaunchAgents. Use --dry-run to inspect the generated job.");
-  }
-
   const existing = readScheduleMetadata(plan.metadataFile);
   const now = new Date().toISOString();
   const metadata = {
@@ -143,25 +141,15 @@ function handleScheduleAdd({ flags, configInfo, stateDir, binPath, io }) {
     updatedAt: now,
   };
 
-  ensureDirectory(plan.scheduleDir);
-  try { fs.chmodSync(plan.scheduleDir, 0o700); } catch {}
-  ensureDirectory(path.dirname(plan.plistPath));
-  ensureDirectory(path.dirname(plan.standardOutPath));
-  writePrivateFile(plan.promptFile, `${prompt.trimEnd()}\n`);
-  writePrivateFile(plan.metadataFile, `${JSON.stringify(metadata, null, 2)}\n`);
-  fs.writeFileSync(plan.plistPath, plan.plist, { mode: 0o644 });
-
-  io.stdout.write(`Wrote ${plan.promptFile}\n`);
-  io.stdout.write(`Wrote ${plan.metadataFile}\n`);
-  io.stdout.write(`Wrote ${plan.plistPath}\n`);
+  writeSchedulePlan(plan, prompt, metadata, io);
 
   if (flags.load === false) {
-    io.stdout.write(`Schedule ${plan.name} written but not loaded. Load with: launchctl bootstrap ${launchAgentDomain()} ${plan.plistPath}\n`);
+    io.stdout.write(`Schedule ${plan.name} written but not installed. ${plan.installHint}\n`);
     return 0;
   }
 
-  loadScheduleLaunchAgent(plan);
-  io.stdout.write(`Loaded schedule ${plan.name} as ${plan.label}\n`);
+  installSchedulePlan(plan, io);
+  io.stdout.write(`Installed schedule ${plan.name} with ${plan.scheduler}\n`);
   io.stdout.write("Requires the relaymux daemon to be running when the schedule fires; use `relaymux restart-launch-agent` if needed.\n");
   return 0;
 }
@@ -185,26 +173,26 @@ function handleScheduleList({ flags, stateDir, io }) {
 function handleScheduleRemove({ flags, positionals, configInfo, stateDir, io }) {
   const name = normalizeScheduleName(flags.name || positionals[1]);
   const existing = readScheduleMetadata(scheduleMetadataPath(stateDir, name));
-  const label = existing?.label || scheduleLaunchAgentLabel(configInfo.config, name);
-  const plistPath = existing?.plistPath || scheduleLaunchAgentPath(label);
+  const scheduler = existing?.scheduler || resolveScheduleBackend(flags.scheduler);
+  const label = existing?.label || (scheduler === "launchd" ? scheduleLaunchAgentLabel(configInfo.config, name) : "");
+  const plistPath = existing?.plistPath || (label ? scheduleLaunchAgentPath(label) : "");
   const scheduleDir = scheduleDirectory(stateDir, name);
-  const target = `${launchAgentDomain()}/${label}`;
 
   if (flags.dryRun) {
-    io.stdout.write(`# would unload ${target}\n`);
-    io.stdout.write(`# would remove ${plistPath}\n`);
+    if (scheduler === "launchd") {
+      io.stdout.write(`# would unload ${launchAgentTarget(label)}\n`);
+      io.stdout.write(`# would remove ${plistPath}\n`);
+    } else {
+      io.stdout.write(`# would remove crontab entry containing ${existing?.marker || cronMarker(name)}\n`);
+    }
     io.stdout.write(`# would remove ${scheduleDir}\n`);
     return 0;
   }
 
-  if (process.platform === "darwin") {
-    runCommand("launchctl", ["bootout", target], { allowFailure: true });
-  }
-  if (fs.existsSync(plistPath)) {
-    fs.unlinkSync(plistPath);
-    io.stdout.write(`Removed ${plistPath}\n`);
+  if (scheduler === "launchd") {
+    removeLaunchdSchedule({ label, plistPath, io });
   } else {
-    io.stdout.write(`No LaunchAgent found at ${plistPath}\n`);
+    removeCronSchedule({ marker: existing?.marker || cronMarker(name), io });
   }
   if (fs.existsSync(scheduleDir)) {
     fs.rmSync(scheduleDir, { recursive: true, force: true });
@@ -215,9 +203,10 @@ function handleScheduleRemove({ flags, positionals, configInfo, stateDir, io }) 
   return 0;
 }
 
-export function buildScheduledPromptPlan({ name, cron, prompt, replyMode = "none", config, configPath, stateDir, binPath }) {
+export function buildScheduledPromptPlan({ name, cron, prompt, replyMode = "none", scheduler = "auto", platform = process.platform, config, configPath, stateDir, binPath }) {
   const normalizedName = normalizeScheduleName(name);
-  const parsedCron = parseCronExpression(cron);
+  const resolvedScheduler = resolveScheduleBackend(scheduler, platform);
+  const parsedCron = parseCronExpression(cron, { forLaunchd: resolvedScheduler === "launchd" });
   const resolvedReplyMode = String(replyMode || "none");
   if (!isReplyMode(resolvedReplyMode)) {
     throw new Error(`--reply-mode must be ${replyModesText()}`);
@@ -229,8 +218,6 @@ export function buildScheduledPromptPlan({ name, cron, prompt, replyMode = "none
   const scheduleDir = scheduleDirectory(stateDir, normalizedName);
   const promptFile = path.join(scheduleDir, "prompt.txt");
   const metadataFile = path.join(scheduleDir, "schedule.json");
-  const label = scheduleLaunchAgentLabel(config, normalizedName);
-  const plistPath = scheduleLaunchAgentPath(label);
   const scheduleLogDir = path.join(resolveLogDir(config), "schedules");
   const standardOutPath = path.join(scheduleLogDir, `${normalizedName}.out.log`);
   const standardErrorPath = path.join(scheduleLogDir, `${normalizedName}.err.log`);
@@ -248,57 +235,137 @@ export function buildScheduledPromptPlan({ name, cron, prompt, replyMode = "none
     "--prompt-file",
     promptFile,
   ];
+  const context = {
+    name: normalizedName,
+    cron: parsedCron,
+    replyMode: resolvedReplyMode,
+    scheduler: resolvedScheduler,
+    scheduleDir,
+    promptFile,
+    metadataFile,
+    standardOutPath,
+    standardErrorPath,
+    programArguments,
+    config,
+    configPath,
+  };
 
+  return resolvedScheduler === "launchd"
+    ? buildLaunchdScheduledPromptPlan(context)
+    : buildCronScheduledPromptPlan(context);
+}
+
+function buildLaunchdScheduledPromptPlan(context) {
+  const label = scheduleLaunchAgentLabel(context.config, context.name);
+  const plistPath = scheduleLaunchAgentPath(label);
   const plist = renderLaunchAgentPlist({
     label,
-    programArguments,
+    programArguments: context.programArguments,
     workingDirectory: os.homedir(),
     environment: {
       PATH: defaultLaunchPath(),
       HOME: os.homedir(),
-      RELAYMUX_CONFIG: configPath,
+      RELAYMUX_CONFIG: context.configPath,
     },
-    standardOutPath,
-    standardErrorPath,
+    standardOutPath: context.standardOutPath,
+    standardErrorPath: context.standardErrorPath,
     keepAlive: false,
     runAtLoad: false,
-    startCalendarIntervals: parsedCron.launchd,
+    startCalendarIntervals: context.cron.launchd,
   });
 
   const metadata = {
     version: 1,
-    name: normalizedName,
-    cron: parsedCron.original,
-    expandedCron: parsedCron.expanded,
-    replyMode: resolvedReplyMode,
-    promptFile,
-    configPath,
+    name: context.name,
+    cron: context.cron.original,
+    expandedCron: context.cron.expanded,
+    replyMode: context.replyMode,
+    promptFile: context.promptFile,
+    configPath: context.configPath,
     label,
     plistPath,
-    standardOutPath,
-    standardErrorPath,
-    program: quoteArgv(programArguments),
+    standardOutPath: context.standardOutPath,
+    standardErrorPath: context.standardErrorPath,
+    program: quoteArgv(context.programArguments),
     scheduler: "launchd",
   };
 
   return {
-    name: normalizedName,
-    cron: parsedCron,
-    replyMode: resolvedReplyMode,
-    scheduleDir,
-    promptFile,
-    metadataFile,
+    ...context,
     label,
     plistPath,
-    standardOutPath,
-    standardErrorPath,
-    programArguments,
     plist,
     metadata,
+    installHint: `Load with: launchctl bootstrap ${launchAgentDomain()} ${plistPath}`,
   };
 }
 
-export function parseCronExpression(raw) {
+function buildCronScheduledPromptPlan(context) {
+  const marker = cronMarker(context.name);
+  const command = escapeCronCommand(`${quoteArgv(context.programArguments)} >> ${shellQuote(context.standardOutPath)} 2>> ${shellQuote(context.standardErrorPath)}`);
+  const cronLine = `${context.cron.expanded} ${command} ${marker}`;
+  const metadata = {
+    version: 1,
+    name: context.name,
+    cron: context.cron.original,
+    expandedCron: context.cron.expanded,
+    replyMode: context.replyMode,
+    promptFile: context.promptFile,
+    configPath: context.configPath,
+    standardOutPath: context.standardOutPath,
+    standardErrorPath: context.standardErrorPath,
+    program: quoteArgv(context.programArguments),
+    scheduler: "cron",
+    marker,
+    cronLine,
+  };
+
+  return {
+    ...context,
+    marker,
+    cronLine,
+    metadata,
+    installHint: "Install by re-running without --no-load, or add the generated crontab entry manually.",
+  };
+}
+
+function writeSchedulePlan(plan, prompt, metadata, io) {
+  ensureDirectory(plan.scheduleDir);
+  try { fs.chmodSync(plan.scheduleDir, 0o700); } catch {}
+  ensureDirectory(path.dirname(plan.standardOutPath));
+  writePrivateFile(plan.promptFile, `${prompt.trimEnd()}\n`);
+  writePrivateFile(plan.metadataFile, `${JSON.stringify(metadata, null, 2)}\n`);
+
+  io.stdout.write(`Wrote ${plan.promptFile}\n`);
+  io.stdout.write(`Wrote ${plan.metadataFile}\n`);
+
+  if (plan.scheduler === "launchd") {
+    ensureDirectory(path.dirname(plan.plistPath));
+    fs.writeFileSync(plan.plistPath, plan.plist, { mode: 0o644 });
+    io.stdout.write(`Wrote ${plan.plistPath}\n`);
+  }
+}
+
+function installSchedulePlan(plan, io) {
+  if (plan.scheduler === "launchd") {
+    loadScheduleLaunchAgent(plan);
+    io.stdout.write(`Loaded LaunchAgent ${plan.label}\n`);
+    return;
+  }
+
+  installCronSchedule(plan, io);
+}
+
+function resolveScheduleBackend(value = "auto", platform = process.platform) {
+  const requested = String(value || "auto").trim().toLowerCase();
+  if (!SCHEDULE_BACKENDS.has(requested)) {
+    throw new Error(`--scheduler must be auto, launchd, or cron`);
+  }
+  if (requested !== "auto") return requested;
+  return platform === "darwin" ? "launchd" : "cron";
+}
+
+export function parseCronExpression(raw, { forLaunchd = true } = {}) {
   const original = String(raw || "").trim();
   if (!original) {
     throw new Error("Missing --cron <expr>");
@@ -318,6 +385,14 @@ export function parseCronExpression(raw) {
     ...field,
     values: parseCronField(parts[index], field),
   }));
+  if (!forLaunchd) {
+    return {
+      original,
+      expanded,
+      launchd: [],
+    };
+  }
+
   const dayOfMonth = fields[2].values;
   const dayOfWeek = fields[4].values;
   if (dayOfMonth && dayOfWeek) {
@@ -353,6 +428,7 @@ export function parseCronExpression(raw) {
 export function listScheduledPrompts(stateDir) {
   const root = path.join(stateDir, "schedules");
   if (!fs.existsSync(root)) return [];
+  const crontab = readCrontab({ allowUnavailable: true }).text;
 
   return fs.readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -360,7 +436,7 @@ export function listScheduledPrompts(stateDir) {
     .filter(Boolean)
     .map((metadata) => ({
       ...metadata,
-      installed: Boolean(metadata.plistPath && fs.existsSync(metadata.plistPath)),
+      installed: isScheduleInstalled(metadata, crontab),
     }))
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
@@ -473,8 +549,11 @@ function range(start, end) {
 }
 
 function loadScheduleLaunchAgent(plan) {
+  if (process.platform !== "darwin") {
+    throw new Error("launchd schedule install requires macOS. Use --scheduler cron or --dry-run.");
+  }
   const domain = launchAgentDomain();
-  const target = `${domain}/${plan.label}`;
+  const target = launchAgentTarget(plan.label);
   runCommand("launchctl", ["bootout", target], { allowFailure: true });
   runCommand("launchctl", ["enable", target], { allowFailure: true });
   const result = runCommand("launchctl", ["bootstrap", domain, plan.plistPath], { allowFailure: true });
@@ -483,16 +562,107 @@ function loadScheduleLaunchAgent(plan) {
   }
 }
 
+function removeLaunchdSchedule({ label, plistPath, io }) {
+  if (process.platform === "darwin" && label) {
+    runCommand("launchctl", ["bootout", launchAgentTarget(label)], { allowFailure: true });
+  }
+  if (plistPath && fs.existsSync(plistPath)) {
+    fs.unlinkSync(plistPath);
+    io.stdout.write(`Removed ${plistPath}\n`);
+  } else {
+    io.stdout.write(`No LaunchAgent found at ${plistPath || "(unknown)"}\n`);
+  }
+}
+
+function installCronSchedule(plan, io) {
+  const current = readCrontab({ allowUnavailable: false });
+  const next = replaceCronMarker(current.text, plan.marker, plan.cronLine);
+  const result = runCommand("crontab", ["-"], {
+    allowFailure: true,
+    input: next,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(`crontab install failed: ${firstLine(result.stderr) || firstLine(result.stdout) || `exit ${result.status}`}`);
+  }
+  io.stdout.write(`Installed crontab entry for ${plan.name}\n`);
+}
+
+function removeCronSchedule({ marker, io }) {
+  const current = readCrontab({ allowUnavailable: true });
+  if (!current.available) {
+    io.stdout.write("No crontab command available; skipped crontab removal.\n");
+    return;
+  }
+  const lines = current.text.split(/\r?\n/);
+  const kept = lines.filter((line) => !line.includes(marker));
+  if (kept.length === lines.length) {
+    io.stdout.write(`No crontab entry found for ${marker}\n`);
+    return;
+  }
+  const next = normalizeCrontabText(kept.join("\n"));
+  const result = runCommand("crontab", ["-"], {
+    allowFailure: true,
+    input: next,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(`crontab removal failed: ${firstLine(result.stderr) || firstLine(result.stdout) || `exit ${result.status}`}`);
+  }
+  io.stdout.write(`Removed crontab entry for ${marker}\n`);
+}
+
+function readCrontab({ allowUnavailable }) {
+  const result = runCommand("crontab", ["-l"], { allowFailure: true });
+  if (result.status === 0) {
+    return { available: true, text: normalizeCrontabText(result.stdout) };
+  }
+  const detail = `${result.stderr || ""}\n${result.stdout || ""}`.toLowerCase();
+  const hasNoCrontab = detail.includes("no crontab") || detail.includes("no crontab for");
+  if (hasNoCrontab) {
+    return { available: true, text: "" };
+  }
+  if (allowUnavailable) {
+    return { available: false, text: "" };
+  }
+  throw new Error(`Could not read crontab: ${firstLine(result.stderr) || firstLine(result.stdout) || result.error?.message || `exit ${result.status}`}`);
+}
+
+function replaceCronMarker(currentText, marker, cronLine) {
+  const lines = currentText.split(/\r?\n/).filter((line) => line && !line.includes(marker));
+  lines.push(cronLine);
+  return normalizeCrontabText(lines.join("\n"));
+}
+
+function isScheduleInstalled(metadata, crontabText) {
+  if (metadata.scheduler === "cron") {
+    return Boolean(metadata.marker && crontabText.includes(metadata.marker));
+  }
+  return Boolean(metadata.plistPath && fs.existsSync(metadata.plistPath));
+}
+
+function normalizeCrontabText(value) {
+  const trimmed = String(value || "").replace(/\s+$/g, "");
+  return trimmed ? `${trimmed}\n` : "";
+}
+
 function formatScheduleDryRun(plan) {
-  return [
+  const lines = [
     `# schedule: ${plan.name}`,
+    `# scheduler: ${plan.scheduler}`,
     `# cron: ${plan.cron.original}${plan.cron.expanded !== plan.cron.original ? ` (${plan.cron.expanded})` : ""}`,
     `# prompt file: ${plan.promptFile}`,
     `# metadata: ${plan.metadataFile}`,
-    `# LaunchAgent: ${plan.plistPath}`,
     `# command: ${plan.metadata.program}`,
-    plan.plist,
-  ].join("\n");
+  ];
+
+  if (plan.scheduler === "launchd") {
+    lines.push(`# LaunchAgent: ${plan.plistPath}`, plan.plist);
+  } else {
+    lines.push("# crontab entry", plan.cronLine);
+  }
+
+  return lines.join("\n");
 }
 
 function formatScheduleTable(schedules) {
@@ -549,6 +719,18 @@ function scheduleLaunchAgentLabel(config, name) {
 
 function scheduleLaunchAgentPath(label) {
   return path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
+}
+
+function launchAgentTarget(label) {
+  return `${launchAgentDomain()}/${label}`;
+}
+
+function cronMarker(name) {
+  return `# relaymux schedule:${name}`;
+}
+
+function escapeCronCommand(command) {
+  return String(command).replaceAll("%", "\\%");
 }
 
 function firstLine(value) {

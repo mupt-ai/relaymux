@@ -134,7 +134,7 @@ relaymux schedule add \
   --prompt "Check the active agent runs and send me a concise status."
 ```
 
-Scheduled prompts are local OS jobs. Automatic install currently requires macOS launchd and runs `relaymux ask --no-wait` when the schedule fires; relaymux does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. Use `relaymux schedule add --dry-run` to inspect the generated job before installing it.
+Scheduled prompts are local OS jobs. The default `auto` scheduler uses macOS launchd on macOS and cron elsewhere. Each job runs `relaymux ask --no-wait` when the schedule fires; relaymux does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. Use `relaymux schedule add --dry-run` to inspect the generated job before installing it, or pass `--scheduler launchd|cron` when you want a specific backend.
 
 ## Docs
 

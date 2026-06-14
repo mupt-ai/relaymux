@@ -32,7 +32,7 @@ Operational rules:
 - Do not close or kill long-running code-task tmux tabs or sessions unless the user explicitly asks.
 - Never include secrets, tokens, private keys, or full credentials in prompts, logs, PRs, or adapter replies.
 - If the request is vague or unsafe, ask one concise clarifying question instead of opening a swarm.
-- There is no durable /loop feature in relaymux; do not promise scheduled looping.`;
+- There is no durable in-process /loop feature in relaymux. For recurring prompts, use relaymux schedule so the local OS scheduler invokes relaymux explicitly.`;
 
 export function buildRuntimePromptContext({ configPath, homeDir, stateDir, session, sessionMode = "shared", tokenFile, webhookUrl }) {
   const isShared = sessionMode === "shared";

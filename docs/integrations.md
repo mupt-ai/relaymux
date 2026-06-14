@@ -57,7 +57,7 @@ relaymux schedule add \
   --prompt "Check the active agent runs and send me a concise status."
 ```
 
-Scheduled prompts are local OS jobs. Automatic install currently uses macOS launchd: relaymux writes a per-user LaunchAgent that runs `relaymux ask --no-wait` on the schedule. It does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. The relaymux daemon must be running when the schedule fires, so run `relaymux restart-launch-agent` after setup if needed. On non-macOS systems, use `--dry-run` to inspect the generated job; automatic install currently requires macOS launchd.
+Scheduled prompts are local OS jobs. The default `auto` scheduler uses macOS launchd on macOS and cron elsewhere. Each job runs `relaymux ask --no-wait` on the schedule; relaymux does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. The relaymux daemon must be running when the schedule fires, so run `relaymux restart-launch-agent` after setup if needed. Use `--dry-run` to inspect the generated job before installing it, or pass `--scheduler launchd|cron` when you want a specific backend.
 
 Use `--prompt-file prompt.txt` for longer prompts. relaymux copies the prompt into `~/.relaymux/state/schedules/<name>/prompt.txt`, stores schedule metadata beside it, and writes schedule logs under `~/.relaymux/logs/schedules`. Re-adding the same `--name` updates that schedule instead of creating a duplicate.
 
@@ -66,7 +66,7 @@ relaymux schedule list
 relaymux schedule remove --name weekday-checkin
 ```
 
-`--reply-mode none` keeps the request local and quiet. `--reply-mode imessage` or `--reply-mode telegram` sends the orchestrator's final reply through that configured adapter. Cron expressions use five fields: minute, hour, day of month, month, and day of week. For launchd compatibility, avoid expressions that constrain both day of month and day of week in the same schedule.
+`--reply-mode none` keeps the request local and quiet. `--reply-mode imessage` or `--reply-mode telegram` sends the orchestrator's final reply through that configured adapter. Cron expressions use five fields: minute, hour, day of month, month, and day of week. When a schedule uses launchd, avoid expressions that constrain both day of month and day of week because launchd matches those fields differently from cron.
 
 ## Direct HTTP
 

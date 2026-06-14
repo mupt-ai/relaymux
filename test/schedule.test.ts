@@ -65,6 +65,13 @@ test("parseCronExpression rejects launchd/cron day matching ambiguity", () => {
   );
 });
 
+test("parseCronExpression allows cron day matching when launchd output is not needed", () => {
+  const parsed = parseCronExpression("0 9 1 * mon", { forLaunchd: false });
+
+  assert.equal(parsed.expanded, "0 9 1 * mon");
+  assert.deepEqual(parsed.launchd, []);
+});
+
 test("normalizeScheduleName keeps LaunchAgent labels predictable", () => {
   assert.equal(normalizeScheduleName("daily-check"), "daily-check");
   assert.throws(() => normalizeScheduleName("daily check"), /letters, numbers/);
@@ -77,6 +84,7 @@ test("buildScheduledPromptPlan keeps prompt text out of the LaunchAgent plist", 
     cron: "0 9 * * *",
     prompt: "secret prompt text",
     replyMode: "telegram",
+    scheduler: "launchd",
     config,
     configPath,
     stateDir: path.join(root, "state"),
@@ -93,6 +101,67 @@ test("buildScheduledPromptPlan keeps prompt text out of the LaunchAgent plist", 
   assert.doesNotMatch(plan.plist, /secret prompt text/);
 });
 
+test("buildScheduledPromptPlan can generate a cron backend without launchd fields", () => {
+  const { config, configPath, root } = writeScheduleTestConfig();
+  const plan = buildScheduledPromptPlan({
+    name: "daily-check",
+    cron: "0 9 1 * mon",
+    prompt: "secret prompt text",
+    replyMode: "none",
+    scheduler: "cron",
+    config,
+    configPath,
+    stateDir: path.join(root, "state"),
+    binPath: "/tmp/relaymux.js",
+  });
+
+  assert.equal(plan.scheduler, "cron");
+  assert.match(plan.cronLine, /^0 9 1 \* mon /);
+  assert.match(plan.cronLine, /# relaymux schedule:daily-check$/);
+  assert.match(plan.cronLine, /--prompt-file/);
+  assert.doesNotMatch(plan.cronLine, /secret prompt text/);
+});
+
+test("buildScheduledPromptPlan escapes percent characters for crontab commands", () => {
+  const { config, root } = writeScheduleTestConfig();
+  const plan = buildScheduledPromptPlan({
+    name: "daily-check",
+    cron: "0 9 * * *",
+    prompt: "hello",
+    scheduler: "cron",
+    config: {
+      ...config,
+      daemon: {
+        ...config.daemon,
+        logDir: path.join(root, "logs%cron"),
+      },
+    },
+    configPath: path.join(root, "relaymux%config.json"),
+    stateDir: path.join(root, "state"),
+    binPath: "/tmp/relaymux.js",
+  });
+
+  assert.match(plan.cronLine, /relaymux\\%config\.json/);
+  assert.match(plan.cronLine, /logs\\%cron/);
+});
+
+test("buildScheduledPromptPlan auto-selects cron off macOS", () => {
+  const { config, configPath, root } = writeScheduleTestConfig();
+  const plan = buildScheduledPromptPlan({
+    name: "daily-check",
+    cron: "0 9 * * *",
+    prompt: "hello",
+    scheduler: "auto",
+    platform: "linux",
+    config,
+    configPath,
+    stateDir: path.join(root, "state"),
+    binPath: "/tmp/relaymux.js",
+  });
+
+  assert.equal(plan.scheduler, "cron");
+});
+
 test("schedule add dry-run prints the planned launchd job without writing state", async () => {
   const { configPath, env, root } = writeScheduleTestConfig();
   const harness = makeIo(env);
@@ -107,6 +176,8 @@ test("schedule add dry-run prints the planned launchd job without writing state"
     "secret prompt text",
     "--cron",
     "0 9 * * *",
+    "--scheduler",
+    "launchd",
     "--reply-mode",
     "none",
     "--dry-run",
@@ -116,6 +187,33 @@ test("schedule add dry-run prints the planned launchd job without writing state"
   assert.match(harness.stdout, /# schedule: daily-check/);
   assert.match(harness.stdout, /StartCalendarInterval/);
   assert.match(harness.stdout, /--prompt-file/);
+  assert.doesNotMatch(harness.stdout, /secret prompt text/);
+  assert.equal(fs.existsSync(path.join(root, "state", "schedules", "daily-check")), false);
+});
+
+test("schedule add dry-run can print a cron job without writing state", async () => {
+  const { configPath, env, root } = writeScheduleTestConfig();
+  const harness = makeIo(env);
+  const code = await main([
+    "--config",
+    configPath,
+    "schedule",
+    "add",
+    "--name",
+    "daily-check",
+    "--prompt",
+    "secret prompt text",
+    "--cron",
+    "0 9 1 * mon",
+    "--scheduler",
+    "cron",
+    "--dry-run",
+  ], harness.io);
+
+  assert.equal(code, 0);
+  assert.match(harness.stdout, /# scheduler: cron/);
+  assert.match(harness.stdout, /# crontab entry/);
+  assert.match(harness.stdout, /# relaymux schedule:daily-check/);
   assert.doesNotMatch(harness.stdout, /secret prompt text/);
   assert.equal(fs.existsSync(path.join(root, "state", "schedules", "daily-check")), false);
 });
@@ -130,12 +228,33 @@ test("schedule remove dry-run prints the launchd and state targets", async () =>
     "remove",
     "--name",
     "daily-check",
+    "--scheduler",
+    "launchd",
     "--dry-run",
   ], harness.io);
 
   assert.equal(code, 0);
   assert.match(harness.stdout, /# would unload .*com\.example\.relaymux\.schedule\.daily-check/);
   assert.match(harness.stdout, new RegExp(`${path.join(root, "state", "schedules", "daily-check").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+});
+
+test("schedule remove dry-run can target a cron marker", async () => {
+  const { configPath, env } = writeScheduleTestConfig();
+  const harness = makeIo(env);
+  const code = await main([
+    "--config",
+    configPath,
+    "schedule",
+    "remove",
+    "--name",
+    "daily-check",
+    "--scheduler",
+    "cron",
+    "--dry-run",
+  ], harness.io);
+
+  assert.equal(code, 0);
+  assert.match(harness.stdout, /# would remove crontab entry containing # relaymux schedule:daily-check/);
 });
 
 test("schedule help has a dedicated page", async () => {

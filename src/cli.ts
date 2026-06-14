@@ -939,7 +939,7 @@ Usage:
   relaymux uninstall-launch-agent
   relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>] [--notify-on-exit never|failure|always]
   relaymux ask <text> [--no-wait] [--reply-mode imessage|telegram|none]
-  relaymux schedule add --name <name> --prompt <text> --cron "0 9 * * *" [--reply-mode none|imessage|telegram]
+  relaymux schedule add --name <name> --prompt <text> --cron "0 9 * * *" [--reply-mode none|imessage|telegram] [--scheduler auto|launchd|cron]
   relaymux schedule list|remove [--name <name>]
   relaymux status [--json] [--session <name>]
   relaymux notify [--run-id <id>] [--reply-mode imessage|telegram|none] [--message <text>]
@@ -1001,9 +1001,10 @@ Request/notify/status options:
 
 Schedule options:
   --cron <expr>              Five-field cron schedule for relaymux schedule add
+  --scheduler <backend>      auto, launchd, or cron (default auto)
   --prompt-file <path>       Read scheduled prompt text from a file
   --reply-mode <mode>        Scheduled ask reply mode: none, imessage, or telegram
-  --no-load                  Write the schedule LaunchAgent without loading it
+  --no-load                  Write schedule files without installing/loading the OS job
 
 Useful commands:
   tmux attach -t <session>       attach to the shared or named agent session
