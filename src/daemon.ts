@@ -3,7 +3,8 @@ import path from "node:path";
 
 import { createCompletionWebhookServer } from "./webhook.js";
 import { buildIncomingOrchestratorPrompt, buildTerminalOrchestratorPrompt, buildWebhookOrchestratorPrompt, runOrchestrator } from "./orchestrator.js";
-import { formatIncomingForPrompt, isIncomingUserMessage, receiveMessages, sendMessage } from "./message-io.js";
+import { formatIncomingForPrompt, isImessageReceiveEnabled, isIncomingUserMessage, receiveMessages, sendMessage } from "./message-io.js";
+import { sendTelegramMessage } from "./telegram.js";
 import { ensureDirectory } from "./paths.js";
 import { validateSessionName } from "./tmux.js";
 
@@ -112,17 +113,17 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     try {
       const prompt = buildWebhookOrchestratorPrompt({ config, configPath: configInfo.path, job });
       const reply = await runOrchestrator(config, { prompt, stateDir, configPath: configInfo.path, requestId: job.requestId });
-      if (job.replyMode === "imessage") {
-        await sendMessage(config, reply, io);
-        log(`sent completion reply for ${job.requestId}`);
-      } else {
+      if (job.replyMode === "none") {
         log(`processed quiet completion ${job.requestId}: ${oneLine(reply).slice(0, 240)}`);
+      } else {
+        await sendReply(config, job.replyMode, reply, io);
+        log(`sent ${job.replyMode} completion reply for ${job.requestId}`);
       }
     } catch (error) {
       warn(`failed processing local completion ${job.requestId}:`, describeError(error));
-      if (job.replyMode === "imessage") {
+      if (job.replyMode !== "none") {
         try {
-          await sendMessage(config, `relaymux orchestrator hit an error processing ${job.source}: ${error.message || String(error)}`, io);
+          await sendReply(config, job.replyMode, `relaymux orchestrator hit an error processing ${job.source}: ${error.message || String(error)}`, io);
         } catch (sendError) {
           warn("also failed to send completion error message:", describeError(sendError));
         }
@@ -135,19 +136,19 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     try {
       const prompt = buildTerminalOrchestratorPrompt({ config, configPath: configInfo.path, job });
       const reply = await runOrchestrator(config, { prompt, stateDir, configPath: configInfo.path, requestId: job.requestId });
-      if (job.replyMode === "imessage") {
-        await sendMessage(config, reply, io);
-        log(`sent terminal request reply for ${job.requestId}`);
-      } else {
+      if (job.replyMode === "none") {
         log(`processed terminal request ${job.requestId}: ${oneLine(reply).slice(0, 240)}`);
+      } else {
+        await sendReply(config, job.replyMode, reply, io);
+        log(`sent ${job.replyMode} terminal request reply for ${job.requestId}`);
       }
       job.deferred?.resolve({ ok: true, queued: false, reply });
     } catch (error) {
       const message = `relaymux orchestrator hit an error processing ${job.source}: ${error.message || String(error)}`;
       warn(`failed processing terminal request ${job.requestId}:`, describeError(error));
-      if (job.replyMode === "imessage") {
+      if (job.replyMode !== "none") {
         try {
-          await sendMessage(config, message, io);
+          await sendReply(config, job.replyMode, message, io);
         } catch (sendError) {
           warn("also failed to send terminal request error message:", describeError(sendError));
         }
@@ -184,8 +185,12 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     if (fresh.length) enqueueIncoming(fresh);
   }
 
-  log("starting relaymux iMessage orchestrator daemon");
-  if (!state.initialized) {
+  const inboundImessageEnabled = isImessageReceiveEnabled(config);
+  log("starting relaymux background daemon");
+  if (inboundImessageEnabled) log("iMessage/SMS adapter enabled for inbound polling");
+  else log("no inbound message adapter enabled; serving local API/webhook only");
+
+  if (inboundImessageEnabled && !state.initialized) {
     try {
       const recent = await receiveMessages(config);
       const initialIds = recent.filter(isIncomingUserMessage).map((message) => String(message.id));
@@ -212,7 +217,9 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
       });
   if (webhookServer) log(`local completion webhook listening on ${config.daemon?.host || "127.0.0.1"}:${Number(config.daemon?.port || 47761)}`);
 
-  await pollOnce().catch((error) => warn("initial poll failed:", describeError(error)));
+  if (inboundImessageEnabled) {
+    await pollOnce().catch((error) => warn("initial poll failed:", describeError(error)));
+  }
   await drainIfOnce(flags, processQueue);
 
   if (flags.once) {
@@ -221,14 +228,16 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     return 0;
   }
 
-  const interval = setInterval(() => {
-    pollOnce().catch((error) => warn("poll failed:", describeError(error)));
-  }, Number(config.imessage?.pollMs || 3000));
+  const interval = inboundImessageEnabled
+    ? setInterval(() => {
+        pollOnce().catch((error) => warn("poll failed:", describeError(error)));
+      }, Number(config.integrations?.imessage?.pollMs || config.imessage?.pollMs || 3000))
+    : null;
 
   await new Promise<void>((resolve) => {
     const shutdown = async (signal) => {
       log(`shutting down (${signal})`);
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
       if (webhookServer) await closeServer(webhookServer);
       resolve();
     };
@@ -277,6 +286,12 @@ function compareMessages(a, b) {
 async function drainIfOnce(flags, processQueue) {
   if (!flags.once) return;
   await processQueue();
+}
+
+async function sendReply(config, replyMode, text, io) {
+  if (replyMode === "imessage") return sendMessage(config, text, io);
+  if (replyMode === "telegram") return sendTelegramMessage(config, text, io, io.env || process.env);
+  throw new Error(`unsupported reply mode: ${replyMode}`);
 }
 
 async function closeServer(server) {

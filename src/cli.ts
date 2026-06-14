@@ -7,7 +7,7 @@ import { parseArgv } from "./args.js";
 import { buildAgentInvocation, buildTmuxShellCommand, buildTmuxShellScript, quoteArgv, renderTemplate, shellExportBlock } from "./command.js";
 import { assertNoFatalCommandFindings } from "./command-validation.js";
 import { collectDoctorChecks } from "./doctor.js";
-import { defaultConfigPath, loadConfig, resolveLogDir, resolveStateDir, writeConfig, writeDefaultConfig } from "./config.js";
+import { defaultConfig, defaultConfigPath, isIntegrationEnabled, loadConfig, resolveLogDir, resolveStateDir, writeConfig } from "./config.js";
 import { runDaemon } from "./daemon.js";
 import { getLaunchAgentStatus, installLaunchAgent, launchAgentPath, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
 import { handleNotify } from "./notify.js";
@@ -15,10 +15,12 @@ import { webhookConfig, webhookStatus } from "./webhook.js";
 import { expandPath, ensureDirectory, pathExists, readTextFile } from "./paths.js";
 import { applyHomeMigration, buildHomeMigrationInventory, ensureRelaymuxHomeLayout, formatHomeMigrationInventory, formatHomeMigrationResults } from "./migration.js";
 import { buildImsgConfig, initOptionsFromFlags, resolveImsgChatId } from "./setup-imsg.js";
+import { buildTelegramConfig, initTelegramOptionsFromFlags, withTelegramIntegration } from "./setup-telegram.js";
 import { latestEventsByRun, readRuns, recordRun, writePromptFile, writeScriptFile } from "./state.js";
 import { resolveLaunchSession, resolveTmuxSessionMode } from "./session.js";
 import { createAgentWindow, createCommandWindow, killWindowByName, listAgentWindows, sendShellCommand, setWindowMetadata, validateSessionName } from "./tmux.js";
 import { createWorktree, resolveRepoAndWorkdir } from "./worktree.js";
+import { isReplyMode, replyModesText } from "./reply-modes.js";
 
 export async function main(argv, io = defaultIo()) {
   try {
@@ -100,7 +102,6 @@ async function handleSetup(flags, io) {
   if (!configInfo.exists || flags.force) {
     await handleInit({
       ...flags,
-      imsg: flags.imsg ?? true,
       installLaunchAgent: shouldInstallLaunchAgent,
     }, io);
     configInfo = loadConfig({ configPath, env: io.env });
@@ -123,7 +124,13 @@ async function handleSetup(flags, io) {
   if (status === 0) {
     io.stdout.write("Setup complete. relaymux is ready.\n");
     io.stdout.write("Next steps:\n");
-    io.stdout.write("  1. Text the configured chat; relaymux should reply from the background LaunchAgent.\n");
+    if (isIntegrationEnabled(configInfo.config, "imessage")) {
+      io.stdout.write("  1. Text the configured iMessage/SMS chat; relaymux should reply from the background LaunchAgent.\n");
+    } else if (isIntegrationEnabled(configInfo.config, "telegram")) {
+      io.stdout.write("  1. Send a Telegram-mode request with `relaymux ask --reply-mode telegram <text>` after setting the bot token.\n");
+    } else {
+      io.stdout.write("  1. Use the local CLI/API path: `relaymux ask <text>` or `relaymux notify --reply-mode none ...`.\n");
+    }
     io.stdout.write("  2. Run `relaymux status` to inspect the daemon and any tmux agent tabs.\n");
     io.stdout.write("  3. Use `relaymux launch --repo <path> --agent pi --prompt <task>` for a manual first agent.\n");
   } else {
@@ -133,34 +140,47 @@ async function handleSetup(flags, io) {
 }
 
 async function handleInit(flags, io) {
-  if (flags.imsg || flags.preset === "imsg") {
+  const wantsImsg = Boolean(flags.imsg || flags.preset === "imsg");
+  const wantsTelegram = Boolean(flags.telegram || flags.preset === "telegram");
+  const labels = [];
+  let config;
+
+  if (wantsImsg) {
     const chatId = await resolveImsgChatId(flags, io, io.env);
-    const config = buildImsgConfig({
+    config = buildImsgConfig({
       ...initOptionsFromFlags(flags),
       chatId,
     }, io.env);
-    const target = writeConfig(flags.config || defaultConfigPath(io.env), config, { force: Boolean(flags.force), env: io.env });
-    const homeDir = ensureRelaymuxHomeLayout(path.dirname(defaultConfigPath(io.env)));
-    io.stdout.write(`Created ${target} with imsg defaults\n`);
-    io.stdout.write(`relaymux home: ${homeDir} (state ${resolveStateDir(config, io.env)}, logs ${resolveLogDir(config, io.env)})\n`);
-    io.stdout.write("Next: relaymux doctor && relaymux restart-launch-agent && relaymux status\n");
-    if (flags.installLaunchAgent) {
-      installLaunchAgent({
-        flags: { load: flags.load },
-        configInfo: { config, path: target, exists: true },
-        binPath: process.argv[1],
-        io,
-      });
-    }
-    return 0;
+    labels.push("iMessage/SMS adapter");
+  } else if (wantsTelegram) {
+    config = buildTelegramConfig(initTelegramOptionsFromFlags(flags), io.env);
+    labels.push("Telegram adapter");
+  } else {
+    config = defaultConfig(io.env);
   }
 
-  const target = writeDefaultConfig(flags.config || defaultConfigPath(io.env), { force: Boolean(flags.force), env: io.env });
-  const config = loadConfig({ configPath: target, env: io.env }).config;
+  if (wantsTelegram && wantsImsg) {
+    config = withTelegramIntegration(config, initTelegramOptionsFromFlags(flags));
+    labels.push("Telegram adapter");
+  }
+
+  const target = writeConfig(flags.config || defaultConfigPath(io.env), config, { force: Boolean(flags.force), env: io.env });
   const homeDir = ensureRelaymuxHomeLayout(path.dirname(defaultConfigPath(io.env)));
-  io.stdout.write(`Created ${target}\n`);
+  io.stdout.write(`Created ${target}${labels.length ? ` with ${labels.join(" and ")} defaults` : " with core defaults"}\n`);
   io.stdout.write(`relaymux home: ${homeDir} (state ${resolveStateDir(config, io.env)}, logs ${resolveLogDir(config, io.env)})\n`);
-  io.stdout.write("Tip: use `relaymux init --imsg` for an imsg-based setup wizard.\n");
+  if (labels.length) {
+    io.stdout.write("Next: relaymux doctor && relaymux restart-launch-agent && relaymux status\n");
+  } else {
+    io.stdout.write("Tip: add optional adapters later with `relaymux init --imsg` or `relaymux init --telegram` into a new config.\n");
+  }
+  if (flags.installLaunchAgent) {
+    installLaunchAgent({
+      flags: { load: flags.load },
+      configInfo: { config, path: target, exists: true },
+      binPath: process.argv[1],
+      io,
+    });
+  }
   return 0;
 }
 
@@ -328,8 +348,8 @@ function handleLaunch(flags, configInfo, stateDir, io) {
 async function handleAsk(flags, positionals, configInfo, io) {
   const text = resolveRequestText(flags, positionals);
   const replyMode = flags.replyMode || "none";
-  if (!["imessage", "none"].includes(replyMode)) {
-    throw new Error("--reply-mode must be imessage or none");
+  if (!isReplyMode(replyMode)) {
+    throw new Error(`--reply-mode must be ${replyModesText()}`);
   }
 
   const metadata = flags.metadataJson ? parseMetadataJson(flags.metadataJson) : {};
@@ -357,7 +377,7 @@ async function handleAsk(flags, positionals, configInfo, io) {
 
 function handleStartTmux(flags, configInfo, stateDir, io) {
   if (!flags.allowTmuxDaemon) {
-    throw new Error("start-tmux daemon mode is retired: iMessage/background/orchestrator must run as a direct LaunchAgent outside tmux. Use `relaymux restart-launch-agent` for the background service and `relaymux launch` for agent tmux tabs.");
+    throw new Error("start-tmux daemon mode is retired: the relaymux background service must run as a direct LaunchAgent outside tmux. Use `relaymux restart-launch-agent` for the background service and `relaymux launch` for agent tmux tabs.");
   }
   if (!flags.session) {
     throw new Error("Missing --session <name> for start-tmux");
@@ -475,7 +495,7 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
 
 async function handleSuperviseTmux(flags, configInfo, stateDir, io) {
   if (!flags.allowTmuxDaemon) {
-    throw new Error("supervise-tmux daemon mode is retired: the background iMessage/orchestrator service must run direct outside tmux.");
+    throw new Error("supervise-tmux daemon mode is retired: the relaymux background service must run direct outside tmux.");
   }
   const config = configInfo.config;
   const session = String(flags.session || io.env.RELAYMUX_SESSION || config.session || "agents");
@@ -616,8 +636,8 @@ function resolveLaunchNotification(flags, config) {
   if (!["never", "failure", "always"].includes(onExit)) {
     throw new Error("--notify-on-exit / launchNotifications.onExit must be never, failure, or always");
   }
-  if (!["imessage", "none"].includes(replyMode)) {
-    throw new Error("--notify-reply-mode / launchNotifications.replyMode must be imessage or none");
+  if (!isReplyMode(replyMode)) {
+    throw new Error(`--notify-reply-mode / launchNotifications.replyMode must be ${replyModesText()}`);
   }
 
   return { onExit, replyMode, tailLines, tailBytes };
@@ -874,10 +894,10 @@ function defaultIo() {
 }
 
 function helpText() {
-  return `relaymux - relay iMessage/SMS requests to local coding agents
+  return `relaymux - coordinate local CLI agents in tmux with optional notification adapters
 
 Mental model:
-  - iMessage/background/orchestrator runs as a direct macOS LaunchAgent outside tmux.
+  - The background daemon/local API runs as a direct macOS LaunchAgent outside tmux when installed.
   - By default, all agents open as tmux tabs/windows in one shared session.
   - Managed config/state/logs/prompts/scratch live under ~/.relaymux by default.
   - Use --session only when you explicitly want a separate/new/named tmux session; panes/splits are never used.
@@ -888,23 +908,30 @@ Start here:
   relaymux status
 
 Usage:
-  relaymux setup [--imsg] [--chat-id <id>] [--no-launch-agent]
+  relaymux setup [--imsg|--telegram] [--chat-id <id>] [--telegram-chat-id <id>] [--no-launch-agent]
   relaymux init [--force] [--config <path>]
   relaymux init --imsg [--chat-id <id>] [--install-launch-agent]
+  relaymux init --telegram [--telegram-chat-id <id>] [--install-launch-agent]
   relaymux install-launch-agent [--dry-run] [--no-load]
   relaymux restart-launch-agent [--dry-run] [--no-load]
   relaymux status-launch-agent [--json]
   relaymux uninstall-launch-agent
   relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>] [--notify-on-exit never|failure|always]
-  relaymux ask <text> [--no-wait] [--reply-mode imessage|none]
+  relaymux ask <text> [--no-wait] [--reply-mode imessage|telegram|none]
   relaymux status [--json] [--session <name>]
-  relaymux notify [--run-id <id>] [--reply-mode imessage|none] [--message <text>]
+  relaymux notify [--run-id <id>] [--reply-mode imessage|telegram|none] [--message <text>]
   relaymux migrate-home [--dry-run] [--apply] [--symlink]
   relaymux doctor
 
 Setup/init options:
-  --imsg                    Create an imsg-based config and prompt for a chat when possible
+  --imsg                    Enable the optional iMessage/SMS adapter and prompt for a chat when possible
+  --telegram                Enable the optional Telegram adapter
   --chat-id <id>            Messages chat id/phone for imsg history/send
+  --telegram-chat-id <id>   Telegram chat id for Bot API sendMessage
+  --telegram-bot-token-env <name>   Env var that contains the Telegram bot token (default TELEGRAM_BOT_TOKEN)
+  --telegram-bot-token-file <path>  File that contains the Telegram bot token (contents are never printed)
+  --telegram-parse-mode <mode>      Optional Telegram parse_mode such as MarkdownV2 or HTML
+  --telegram-timeout-ms <ms>        Telegram sendMessage timeout (default 30000)
   --cwd <path>              Working directory for Pi and message commands
   --state-dir <path>        State/token/log directory
   --install-launch-agent    Install the direct/background LaunchAgent after writing config
@@ -930,7 +957,7 @@ Launch options:
   --hold                     Keep a shell open after the agent exits
   --attach                   Print attach command after launch
   --notify-on-exit <mode>    Auto relaymux notify on agent exit: never (default), failure, or always
-  --notify-reply-mode <mode> imessage sends chat updates; none records quiet completion context
+  --notify-reply-mode <mode> imessage/telegram sends adapter updates; none records quiet completion context
   --notify-tail-lines <n>    Recent tmux output lines to include for nonzero auto notifications
   --notify-tail-bytes <n>    Max bytes of recent tmux output in nonzero auto notifications
 
@@ -942,7 +969,7 @@ Request/notify/status options:
   --message <text>           Request/notify message text
   --no-wait                  For ask/request: enqueue and return immediately
   --timeout-ms <ms>          For ask/request: client-side wait timeout
-  --reply-mode <mode>        imessage sends a concise chat update; none is quiet/no text
+  --reply-mode <mode>        imessage/telegram sends an adapter update; none is quiet/no text
   --from <name>              For notify: source/subagent name
   --idempotency-key <key>    For notify: suppress duplicate completion webhook retries
   --metadata-json <json>     For notify: optional metadata object
@@ -950,7 +977,7 @@ Request/notify/status options:
 
 Useful commands:
   tmux attach -t <session>       attach to the shared or named agent session
-  tmux kill-session -t <session> kill only that tmux session; background iMessage keeps running
+  tmux kill-session -t <session> kill only that tmux session; background daemon/adapters keep running
 
 Default home layout: ~/.relaymux/{config.json,state,logs,tasks,reports,research,workouts}.
 Config defaults to ${defaultConfigPath()} (legacy ~/.config/relaymux/config.json is still read if the new config does not exist).

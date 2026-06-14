@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { renderTemplate } from "./command.js";
+import { getIntegration, isIntegrationEnabled } from "./config.js";
 import { expandPath } from "./paths.js";
 import { runCommandAsync } from "./async-process.js";
 
@@ -59,7 +60,7 @@ export function formatIncomingForPrompt(messages) {
   if (normalized.length === 1) {
     const message = normalized[0];
     const attachments = formatAttachments(message.attachments);
-    return `New incoming iMessage/SMS from the configured chat (${message.createdAt || "unknown time"}, message id ${message.id}).\n\n${message.text || "[no text]"}${attachments}\n\nReply directly and concisely as a text message. Do not mention daemon internals.`;
+    return `New incoming message from the configured iMessage/SMS adapter chat (${message.createdAt || "unknown time"}, message id ${message.id}).\n\n${message.text || "[no text]"}${attachments}\n\nReply directly and concisely. Do not mention daemon internals.`;
   }
 
   const body = normalized
@@ -68,7 +69,7 @@ export function formatIncomingForPrompt(messages) {
       return `- ${message.createdAt || "unknown time"} id=${message.id}: ${message.text || "[no text]"}${attachments}`;
     })
     .join("\n");
-  return `The configured iMessage/SMS chat sent these new messages, in order:\n${body}\n\nRespond once, directly and concisely as a text message. Do not mention daemon internals.`;
+  return `The configured iMessage/SMS adapter chat sent these new messages, in order:\n${body}\n\nRespond once, directly and concisely. Do not mention daemon internals.`;
 }
 
 export function splitMessage(text, maxChars = 1400) {
@@ -95,11 +96,17 @@ export function buildAdapterArgv(commandConfig, context) {
   return commandConfig.argv.map((part) => renderTemplate(part, context));
 }
 
-export async function receiveMessages(config) {
-  const imessage = config.imessage || {};
+export function isImessageReceiveEnabled(config) {
+  const imessage = getIntegration(config, "imessage");
   const receive = imessage.receive || {};
-  if (receive.backend === "none" || receive.enabled === false) return [];
-  if (receive.backend !== "command") throw new Error(`unsupported receive backend: ${receive.backend || "missing"}`);
+  return imessage.enabled === true && receive.enabled !== false && receive.backend !== "none";
+}
+
+export async function receiveMessages(config) {
+  const imessage = getIntegration(config, "imessage");
+  const receive = imessage.receive || {};
+  if (!isImessageReceiveEnabled(config)) return [];
+  if (receive.backend !== "command") throw new Error(`unsupported iMessage receive backend: ${receive.backend || "missing"}`);
 
   const commandConfig = receive.command || {};
   const argv = buildAdapterArgv(commandConfig, messageContext(config, { limit: imessage.syncLimit || 5 }));
@@ -112,7 +119,10 @@ export async function receiveMessages(config) {
 }
 
 export async function sendMessage(config: any, text: string, io: any = process) {
-  const imessage = config.imessage || {};
+  const imessage = getIntegration(config, "imessage");
+  if (!isIntegrationEnabled(config, "imessage")) {
+    throw new Error("iMessage/SMS adapter is not enabled in config.integrations.imessage");
+  }
   const send = imessage.send || {};
   const maxReplyChars = Number(imessage.maxReplyChars || 1400);
   const chunks = splitMessage(text, maxReplyChars);
@@ -123,7 +133,7 @@ export async function sendMessage(config: any, text: string, io: any = process) 
     }
     return;
   }
-  if (send.backend !== "command") throw new Error(`unsupported send backend: ${send.backend || "missing"}`);
+  if (send.backend !== "command") throw new Error(`unsupported iMessage send backend: ${send.backend || "missing"}`);
 
   const commandConfig = send.command || {};
   for (const chunk of chunks) {
@@ -145,7 +155,7 @@ export function commandSafeMessageText(text) {
 }
 
 export function messageContext(config, extra = {}) {
-  const imessage = config.imessage || {};
+  const imessage = getIntegration(config, "imessage");
   return {
     chatId: imessage.chatId || "",
     recipient: imessage.recipient || "",

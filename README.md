@@ -1,6 +1,6 @@
 # relaymux
 
-`relaymux` launches local CLI agents in `tmux` windows and gives them a small, local completion path back to a daemon or run log.
+`relaymux` coordinates local CLI agents in `tmux` windows and gives them a small local API for status, requests, and completion notifications.
 
 ```bash
 # Start a visible agent window in the shared tmux session.
@@ -8,20 +8,19 @@ relaymux launch --repo ~/code/my-app --agent pi --name fix-tests \
   --prompt "Fix the failing tests, then report back with relaymux notify."
 
 # From inside an agent when the work is done or blocked.
-relaymux notify --from fix-tests --reply-mode imessage \
-  --idempotency-key fix-tests-20260614-done \
+relaymux notify --from fix-tests \
   --message "Done: fixed the tests. Validation: npm test passed."
 ```
 
-`--reply-mode imessage` is for machines with the optional daemon configured through `relaymux setup`. The iMessage/SMS path uses your configured `imsg` command; relaymux does not talk to Messages.app directly. Without the daemon, relaymux still launches local tmux agent windows and records run state, but it will not send text-message completions.
+The core product is local: CLI + `tmux` + run state + a loopback HTTP API/webhook. Notification adapters are optional. iMessage/SMS via `imsg` and Telegram via the Bot API are supported as add-ons; neither is required to launch agents, inspect status, or record local notifications.
 
-relaymux is not a model provider, coding agent, IDE, or cloud runtime. It is a thin local coordinator for tools you already run in a terminal: `pi`, `codex`, `claude`, `aider`, shell scripts, or any command you add to your config.
+relaymux is not a model provider, coding agent, IDE, cloud runtime, or general messaging SDK. It is a thin local coordinator for tools you already run in a terminal: `pi`, `codex`, `claude`, `aider`, shell scripts, or any command you add to your config.
 
 ## Why relaymux exists
 
 Coding agents are useful, but running more than one usually turns into a pile of terminal tabs, forgotten prompts, and "did that finish?" checks. relaymux keeps the work visible in `tmux`, gives every delegated run a name and local state record, and provides one completion path: `relaymux notify`.
 
-The optional iMessage/SMS daemon lets you ask your Mac to start or coordinate agent work while you are away from the keyboard. Text the configured chat, the daemon runs your orchestrator command, and the orchestrator can either answer directly or launch longer work into `tmux`.
+Optional adapters can make those completions user-visible away from the keyboard. iMessage/SMS and Telegram are sibling integrations: configure one, both, or neither.
 
 ## Core ideas
 
@@ -29,11 +28,11 @@ An **agent** is just a command template in `~/.relaymux/config.json`. If you con
 
 A **run** is one `relaymux launch`. By default, relaymux creates a new `tmux` window in one shared session named `agents`. tmux calls these windows; many terminal apps display them like tabs. relaymux does not create panes or splits for agent runs.
 
-The **daemon** is optional. On macOS, `relaymux setup` can install it as a per-user LaunchAgent. The daemon stays outside `tmux`, polls your configured message source, accepts local `relaymux ask` and `relaymux notify` requests, and runs your orchestrator command.
+The **daemon** is optional for local launches, but useful for the local API and adapter delivery. On macOS, `relaymux setup` can install it as a per-user LaunchAgent. The daemon stays outside `tmux`, accepts local `relaymux ask` and `relaymux notify` requests, and runs your orchestrator command. If the iMessage/SMS adapter is enabled, it also polls the configured `imsg` chat.
 
-The **orchestrator** is also just a command, but it has a different job from an agent. The orchestrator handles inbound requests from iMessage/SMS or `relaymux ask`; agents do delegated work launched with `relaymux launch`. The orchestrator receives incoming text plus relaymux instructions and prints a reply. The default iMessage setup uses Pi in non-interactive mode, but you can replace it with any command that accepts a prompt and writes a clean final response to stdout.
+The **orchestrator** is also just a command, but it has a different job from an agent. The orchestrator handles inbound requests from the local API or optional adapters; agents do delegated work launched with `relaymux launch`. The orchestrator receives incoming text plus relaymux instructions and prints a reply.
 
-relaymux stores its private config, token, run records, prompts, and logs under `~/.relaymux` by default:
+relaymux stores private config, token, run records, prompts, and logs under `~/.relaymux` by default:
 
 ```text
 ~/.relaymux/
@@ -64,9 +63,12 @@ cd relaymux
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-For iMessage/SMS control you also need macOS, Messages signed in on that Mac, normal SMS forwarding if you want SMS, and an `imsg` CLI available as `imsg`. relaymux does not vendor or install `imsg`; it shells out to the message tool you configure. The expected commands are `imsg chats --limit <n> --json`, `imsg history --chat-id <id> --limit <n> --json`, and `imsg send --chat-id <id> --text <text> --json`.
+Optional adapter requirements:
 
-## Try it in two minutes without iMessage
+- iMessage/SMS: macOS, Messages signed in on that Mac, SMS forwarding if you want SMS, and an external `imsg` CLI. relaymux shells out to the command you configure; it does not vendor `imsg` or talk to Messages.app directly.
+- Telegram: a Telegram bot token and chat id. relaymux sends through the Telegram Bot API and reads the token from an environment variable or token file.
+
+## Try it in two minutes without message adapters
 
 This starts a harmless local run using the built-in default config, which includes a `custom` agent that just prints the prompt. You do not need to run `relaymux setup` first. `--repo` is the working directory for the command; it does not have to be a Git repository unless you use Git-specific features such as `--session-mode per-worktree`. `--hold` keeps the tmux window open after the command exits so you can inspect it.
 
@@ -99,53 +101,104 @@ relaymux launch --repo ~/code/my-app --agent pi --name investigate-api \
   --prompt "Investigate the API failure. When done or blocked, run relaymux notify with a concise summary."
 ```
 
-## Optional iMessage/SMS setup
+## Local API/webhook
 
-The message flow is intentionally local:
+The daemon exposes the core integration point on loopback only. `relaymux ask` and `relaymux notify --reply-mode ...` are CLI wrappers over this API.
 
-```text
-iMessage/SMS or relaymux ask
-        │
-        ▼
-relaymux daemon on your Mac ──▶ orchestrator command
-        │                              │
-        │                              └── may run relaymux launch
-        ▼
-reply text ◀──────────── relaymux notify from tmux agent windows
-```
+Default endpoints:
 
-Run setup on the Mac that will receive and send messages:
+- `GET /health` returns daemon, queue, and webhook status.
+- `POST /request` submits a terminal/local request to the orchestrator.
+- `POST /message` or `POST /agent-message` submits a subagent completion/update.
+
+Requests to `POST` endpoints require `Authorization: Bearer <token>`, where the token is stored in `~/.relaymux/state/webhook-token` by default. For foreground debugging instead of LaunchAgent, run `relaymux daemon`.
 
 ```bash
-relaymux setup
+TOKEN="$(cat ~/.relaymux/state/webhook-token)"
+curl -sS -X POST http://127.0.0.1:47761/message \
+  -H "authorization: Bearer $TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"from":"build-agent","replyMode":"none","idempotencyKey":"build-agent:job-123:done","text":"Finished; tests passed."}'
+```
+
+`replyMode` can be:
+
+| `replyMode` | Behavior |
+| --- | --- |
+| `none` | Quiet/local context update; no adapter message is sent. |
+| `imessage` | Send the orchestrator's user-visible reply through the optional iMessage/SMS adapter. |
+| `telegram` | Send the orchestrator's user-visible reply through the optional Telegram adapter. |
+
+## Optional iMessage/SMS adapter
+
+The iMessage/SMS adapter is one optional integration. It uses your configured `imsg` command for both inbound polling and outbound replies. The expected command shapes are `imsg chats --limit <n> --json`, `imsg history --chat-id <id> --limit <n> --json`, and `imsg send --chat-id <id> --text <text> --json`.
+
+```bash
+relaymux setup --imsg --chat-id <chat-id-or-phone-number>
 relaymux doctor
 relaymux status
 ```
 
-`relaymux setup` creates `~/.relaymux/config.json`, tries to discover recent `imsg` chats, installs the LaunchAgent, and prints next steps. The target can be an individual chat, group chat, or phone number understood by your `imsg` tool. If chat discovery is not available or you already know the target chat, pass it explicitly:
+`relaymux setup --imsg` creates `~/.relaymux/config.json`, tries to discover recent `imsg` chats when `--chat-id` is omitted, installs the LaunchAgent unless `--no-launch-agent` is passed, and prints next steps.
+
+After setup, text the configured chat with a small request. Use a chat where your request appears as an incoming message to the Mac's Messages account; messages marked by Messages as sent by that Mac are ignored so relaymux does not respond to its own replies.
+
+Manual user-visible completion:
 
 ```bash
-relaymux setup --chat-id <chat-id-or-phone-number>
+relaymux notify \
+  --from fix-api \
+  --reply-mode imessage \
+  --idempotency-key fix-api-20260614-done \
+  --message "Finished: fixed the API bug. Validation: npm test passed."
 ```
 
-After setup, text the configured chat with a small request. Use a chat where your request appears as an incoming message to the Mac's Messages account; messages marked by Messages as sent by that Mac are ignored so relaymux does not respond to its own replies. The daemon remembers message ids it has already seen, runs the orchestrator, and sends back the orchestrator's stdout as the reply.
+## Optional Telegram adapter
 
-You can also send a request to the same daemon from a terminal:
+The Telegram adapter is outbound notification support through `sendMessage`. It does not poll Telegram for inbound messages.
+
+Create a bot with BotFather, get a chat id for the chat you want to notify, and store the token outside the public config. A token file works well with LaunchAgent because it does not depend on your interactive shell environment:
 
 ```bash
-relaymux ask "Launch an agent in ~/code/my-app to inspect the failing test"
-relaymux ask --no-wait --reply-mode imessage "Start a longer refactor and text me when it is delegated"
+mkdir -p ~/.relaymux/secrets
+printf '%s\n' '<telegram-bot-token>' > ~/.relaymux/secrets/telegram-bot-token
+chmod 600 ~/.relaymux/secrets/telegram-bot-token
+
+relaymux setup --telegram \
+  --telegram-chat-id <telegram-chat-id> \
+  --telegram-bot-token-file ~/.relaymux/secrets/telegram-bot-token
+relaymux doctor
+relaymux status
 ```
 
-If you do not want a LaunchAgent, you can run the daemon in the foreground for debugging:
+You can also use an environment variable instead of a file:
+
+```json
+{
+  "integrations": {
+    "telegram": {
+      "enabled": true,
+      "chatId": "<telegram-chat-id>",
+      "botTokenEnv": "TELEGRAM_BOT_TOKEN",
+      "parseMode": ""
+    }
+  }
+}
+```
+
+Manual Telegram completion:
 
 ```bash
-relaymux daemon
+relaymux notify \
+  --from fix-api \
+  --reply-mode telegram \
+  --idempotency-key fix-api-20260614-done \
+  --message "Finished: fixed the API bug. Validation: npm test passed."
 ```
 
 ## Configuration
 
-`relaymux setup` writes a full config, but the important shape is small. Command arrays are argv templates; `{prompt}` and `{promptFile}` are substituted at launch time. The Pi commands below are examples, not requirements; edit them to match the agent CLIs you actually use.
+`relaymux init` writes a core config with no message adapters. Command arrays are argv templates; `{prompt}` and `{promptFile}` are substituted at launch time. The Pi commands below are examples, not requirements; edit them to match the agent CLIs you actually use.
 
 ```json
 {
@@ -163,43 +216,49 @@ relaymux daemon
     "launchAgentLabel": "com.relaymux.daemon",
     "logDir": "~/.relaymux/logs"
   },
-  "imessage": {
-    "chatId": "<chat-id-or-phone-number>",
-    "pollMs": 3000,
-    "receive": {
-      "backend": "command",
-      "command": {
-        "argv": ["imsg", "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--json"]
-      }
-    },
-    "send": {
-      "backend": "command",
-      "command": {
-        "argv": ["imsg", "send", "--chat-id", "{chatId}", "--text", "{text}", "--json"]
-      }
-    }
-  },
+  "integrations": {},
   "orchestrator": {
     "cwd": "~",
     "command": ["pi", "--print", "--continue", "--session-dir", "~/.relaymux/state/sessions", "{prompt}"],
     "promptMode": "arg"
   },
   "agents": {
-    "pi": {
-      "command": ["pi", "{prompt}"],
-      "promptMode": "arg"
+    "pi": { "command": ["pi", "{prompt}"], "promptMode": "arg" },
+    "codex": { "command": ["codex", "{prompt}"], "promptMode": "arg" },
+    "custom": { "command": ["sh", "-lc", "printf '%s\\n' \"$RELAYMUX_PROMPT\""], "promptMode": "env" }
+  }
+}
+```
+
+Optional adapter config lives under `integrations`:
+
+```json
+{
+  "integrations": {
+    "imessage": {
+      "enabled": true,
+      "chatId": "<chat-id-or-phone-number>",
+      "pollMs": 3000,
+      "receive": {
+        "backend": "command",
+        "command": { "argv": ["imsg", "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--json"] }
+      },
+      "send": {
+        "backend": "command",
+        "command": { "argv": ["imsg", "send", "--chat-id", "{chatId}", "--text", "{text}", "--json"] }
+      }
     },
-    "codex": {
-      "command": ["codex", "{prompt}"],
-      "promptMode": "arg"
-    },
-    "custom": {
-      "command": ["sh", "-lc", "printf '%s\\n' \"$RELAYMUX_PROMPT\""],
-      "promptMode": "env"
+    "telegram": {
+      "enabled": true,
+      "chatId": "<telegram-chat-id>",
+      "botTokenFile": "~/.relaymux/secrets/telegram-bot-token",
+      "parseMode": ""
     }
   }
 }
 ```
+
+Legacy top-level `imessage` config is still accepted and normalized as `integrations.imessage` at load time.
 
 Prompt passing modes are:
 
@@ -232,23 +291,21 @@ Use per-worktree sessions when each Git worktree should get a stable session nam
 relaymux launch --session-mode per-worktree --repo ~/code/my-app --agent pi --prompt @prompt.txt
 ```
 
-Send a completion from a delegated agent. Manual notifications with `--reply-mode` require the daemon; local runs still record automatic `started` and `completed` events even without it:
+Send a local run-log completion from a delegated agent. Local runs still record automatic `started` and `completed` events even without the daemon:
 
 ```bash
 relaymux notify \
   --from fix-api \
-  --reply-mode imessage \
-  --idempotency-key fix-api-20260614-done \
   --message "Finished: fixed the API bug. Validation: npm test passed."
 ```
 
-`--reply-mode imessage` asks the daemon to send a user-visible update to the configured chat. `--reply-mode none` posts the completion to the daemon so the orchestrator can observe it, but suppresses the outgoing text. Use a stable `--idempotency-key` for one logical update so retries do not send duplicates.
+Add `--reply-mode none` when the daemon should receive quiet context but no adapter message should be sent. Use `--reply-mode imessage` or `--reply-mode telegram` only when that adapter is configured and you want a user-visible update. Use a stable `--idempotency-key` for one logical update so retries do not send duplicates.
 
 Turn on wrapper-level exit notifications if you want a fallback even when the agent forgets to call `relaymux notify`. `failure` means only nonzero exits notify; `always` also notifies on success; `never` is the default:
 
 ```bash
 relaymux launch --repo ~/code/my-app --agent pi --name risky-task \
-  --notify-on-exit failure --notify-reply-mode imessage \
+  --notify-on-exit failure --notify-reply-mode telegram \
   --prompt @prompt.txt
 ```
 
@@ -270,11 +327,11 @@ relaymux uninstall-launch-agent
 
 ## Safety model and limitations
 
-relaymux is designed for a single user's local machine. The daemon binds to `127.0.0.1` and `relaymux notify` authenticates to it with a random token stored under `~/.relaymux/state`. The config file is written with private file permissions.
+relaymux is designed for a single user's local machine. The daemon binds to `127.0.0.1` and API requests authenticate with a random token stored under `~/.relaymux/state`. The config file is written with private file permissions.
 
-That does not make arbitrary agents safe. If an incoming message causes your orchestrator to launch `pi`, `codex`, `claude`, or a shell script, that command has the same local permissions it would have if you ran it yourself. Configure relaymux only with chats and agents you trust, review your agent prompts, and assume prompts, logs, tmux scrollback, and run records may contain sensitive project context.
+That does not make arbitrary agents safe. If a local request or adapter message causes your orchestrator to launch `pi`, `codex`, `claude`, or a shell script, that command has the same local permissions it would have if you ran it yourself. Configure relaymux only with adapters and agents you trust, review your agent prompts, and assume prompts, logs, tmux scrollback, and run records may contain sensitive project context.
 
-relaymux is probably the wrong tool if you need a sandbox, a multi-tenant service, durable distributed jobs, a cron/scheduler, hosted model inference, or a web UI. It is also not a general iMessage library; iMessage/SMS support depends on macOS, Messages.app, and the external `imsg` command you choose.
+relaymux is probably the wrong tool if you need a sandbox, a multi-tenant service, durable distributed jobs, a cron/scheduler, hosted model inference, or a web UI. It is also not a general iMessage, SMS, or Telegram library.
 
 ## Troubleshooting
 
@@ -285,7 +342,7 @@ relaymux restart-launch-agent
 relaymux status-launch-agent
 ```
 
-If Messages send/receive fails, verify your `imsg` CLI first:
+If iMessage/SMS send/receive fails, verify your `imsg` CLI first:
 
 ```bash
 imsg chats --limit 5 --json
@@ -293,6 +350,13 @@ relaymux doctor
 ```
 
 You may need to grant the terminal or automation host the macOS permissions required by your message tool, such as Full Disk Access or Messages automation permission.
+
+If Telegram sending fails, verify the chat id, token source, and token file permissions:
+
+```bash
+chmod 600 ~/.relaymux/secrets/telegram-bot-token
+relaymux doctor
+```
 
 If tmux is missing:
 
@@ -308,7 +372,7 @@ chmod 600 ~/.relaymux/state/webhook-token
 relaymux doctor
 ```
 
-For a no-Messages smoke test from a clone:
+For a no-adapter smoke test from a clone:
 
 ```bash
 npm run build
@@ -326,7 +390,7 @@ npm ci
 npm run validate
 ```
 
-Issues and pull requests are welcome. Please keep public examples free of private paths, phone numbers, chat ids, and secrets.
+Issues and pull requests are welcome. Please keep public examples free of private paths, phone numbers, chat ids, tokens, and secrets.
 
 ## License
 

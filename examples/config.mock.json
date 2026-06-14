@@ -6,29 +6,7 @@
     "sessionMode": "shared",
     "sessionPrefix": "rmx"
   },
-  "imessage": {
-    "chatId": "mock-chat",
-    "recipient": "+15555550123",
-    "pollMs": 1000,
-    "syncLimit": 5,
-    "maxReplyChars": 1400,
-    "receive": {
-      "backend": "command",
-      "command": {
-        "argv": ["sh", "-lc", "printf '%s\\n' '[]'"],
-        "cwd": "/tmp",
-        "timeoutMs": 5000
-      }
-    },
-    "send": {
-      "backend": "command",
-      "command": {
-        "argv": ["sh", "-lc", "printf '%s\\n' \"$1\" >> /tmp/relaymux-mock/outbox.txt", "sh", "{text}"],
-        "cwd": "/tmp",
-        "timeoutMs": 5000
-      }
-    }
-  },
+  "integrations": {},
   "daemon": {
     "enabled": true,
     "host": "127.0.0.1",

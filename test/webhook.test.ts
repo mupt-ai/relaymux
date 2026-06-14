@@ -24,7 +24,9 @@ test("normalizeCompletionBody accepts message aliases", () => {
   assert.equal(job.metadata.runId, "r1");
 });
 
-test("normalizeCompletionBody rejects invalid reply mode", () => {
+test("normalizeCompletionBody accepts telegram reply mode and rejects invalid modes", () => {
+  const job = normalizeCompletionBody({ text: "x", replyMode: "telegram" }, "req");
+  assert.equal(job.replyMode, "telegram");
   assert.throws(() => normalizeCompletionBody({ text: "x", replyMode: "loud" }, "req"), /replyMode/);
 });
 

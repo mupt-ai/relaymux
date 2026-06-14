@@ -8,34 +8,17 @@
   },
   "launchNotifications": {
     "onExit": "never",
-    "replyMode": "imessage",
+    "replyMode": "telegram",
     "tailLines": 80,
     "tailBytes": 4000
   },
   "integrations": {
-    "imessage": {
+    "telegram": {
       "enabled": true,
-      "chatId": "CHAT_ID_OR_PHONE",
-      "recipient": "",
-      "pollMs": 3000,
-      "syncLimit": 5,
-      "maxReplyChars": 1400,
-      "receive": {
-        "backend": "command",
-        "command": {
-          "argv": ["imsg", "history", "--chat-id", "{chatId}", "--limit", "{limit}", "--json"],
-          "cwd": "~",
-          "timeoutMs": 30000
-        }
-      },
-      "send": {
-        "backend": "command",
-        "command": {
-          "argv": ["imsg", "send", "--chat-id", "{chatId}", "--text", "{text}", "--json"],
-          "cwd": "~",
-          "timeoutMs": 60000
-        }
-      }
+      "chatId": "TELEGRAM_CHAT_ID",
+      "botTokenFile": "~/.relaymux/secrets/telegram-bot-token",
+      "parseMode": "",
+      "timeoutMs": 30000
     }
   },
   "daemon": {
