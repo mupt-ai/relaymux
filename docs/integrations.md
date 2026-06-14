@@ -23,6 +23,8 @@ Ask the orchestrator from a terminal:
 relaymux ask "Open an agent in ~/code/my-app to inspect the failing test."
 ```
 
+`relaymux ask` requires the relaymux daemon to be running. `relaymux setup` installs the daemon as a per-user LaunchAgent on macOS, and `relaymux restart-launch-agent` reloads it after config changes.
+
 Send a local run-log completion from a delegated agent. Local runs still record automatic `started` and `completed` events even without the daemon:
 
 ```bash
@@ -42,6 +44,29 @@ Use a stable `--idempotency-key` for one logical update so retries do not send d
 | `telegram` | The daemon passes the update to the orchestrator, then sends the orchestrator's user-visible reply through the optional Telegram adapter. |
 
 Use `--reply-mode imessage` or `--reply-mode telegram` only when that adapter is configured and you want a user-visible update.
+
+## Scheduled Prompts
+
+Schedule a recurring local prompt when you want the orchestrator asked on a clock, such as a weekday morning check-in:
+
+```bash
+relaymux schedule add \
+  --name weekday-checkin \
+  --cron "0 9 * * 1-5" \
+  --reply-mode imessage \
+  --prompt "Check the active agent runs and send me a concise status."
+```
+
+Scheduled prompts are local OS jobs. The default `auto` scheduler uses macOS launchd on macOS and cron elsewhere. Each job runs `relaymux ask --no-wait` on the schedule; relaymux does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. The relaymux daemon must be running when the schedule fires, so run `relaymux restart-launch-agent` after setup if needed. Use `--dry-run` to inspect the generated job before installing it, or pass `--scheduler launchd|cron` when you want a specific backend.
+
+Use `--prompt-file prompt.txt` for longer prompts. relaymux copies the prompt into `~/.relaymux/state/schedules/<name>/prompt.txt`, stores schedule metadata beside it, and writes schedule logs under `~/.relaymux/logs/schedules`. Re-adding the same `--name` updates that schedule instead of creating a duplicate.
+
+```bash
+relaymux schedule list
+relaymux schedule remove --name weekday-checkin
+```
+
+`--reply-mode none` keeps the request local and quiet. `--reply-mode imessage` or `--reply-mode telegram` sends the orchestrator's final reply through that configured adapter. Cron expressions use five fields: minute, hour, day of month, month, and day of week. When a schedule uses launchd, avoid expressions that constrain both day of month and day of week because launchd matches those fields differently from cron.
 
 ## Direct HTTP
 

@@ -128,10 +128,24 @@ relaymux status
 
 Then use `relaymux notify --reply-mode imessage` or `relaymux notify --reply-mode telegram` from an agent when you want an adapter-delivered update. In this command, reply mode means the delivery channel for a user-visible notification.
 
+## Scheduled Prompts
+
+Use `relaymux schedule` when you want the configured orchestrator asked on a recurring local schedule:
+
+```bash
+relaymux schedule add \
+  --name weekday-checkin \
+  --cron "0 9 * * 1-5" \
+  --reply-mode imessage \
+  --prompt "Check the active agent runs and send me a concise status."
+```
+
+Scheduled prompts are local OS jobs. The default `auto` scheduler uses macOS launchd on macOS and cron elsewhere. Each job runs `relaymux ask --no-wait` when the schedule fires; relaymux does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. Use `relaymux schedule add --dry-run` to inspect the generated job before installing it, or pass `--scheduler launchd|cron` when you want a specific backend.
+
 ## Docs
 
 - [Configuration](docs/configuration.md): config shape, prompt passing, sessions, and common launch patterns.
-- [Integrations](docs/integrations.md): local HTTP API for agent callbacks, `relaymux ask`, `relaymux notify`, iMessage/SMS, and Telegram.
+- [Integrations](docs/integrations.md): local HTTP API for agent callbacks, `relaymux ask`, `relaymux notify`, scheduled prompts, iMessage/SMS, and Telegram.
 - [Operations](docs/operations.md): install footprint, uninstall, background service, watchdog, safety model, troubleshooting, and development.
 
 ## Development

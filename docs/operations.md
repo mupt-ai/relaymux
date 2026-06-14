@@ -47,7 +47,7 @@ relaymux is designed for a single user's local machine. The daemon binds to `127
 
 That does not make arbitrary agents safe. If a local request or adapter message causes your orchestrator to launch `pi`, `codex`, `claude`, or a shell script, that command has the same local permissions it would have if you ran it yourself. Configure relaymux only with adapters and agents you trust, review your agent prompts, and assume prompts, logs, tmux scrollback, and run records may contain sensitive project context.
 
-relaymux is probably the wrong tool if you need a sandbox, a multi-tenant service, durable distributed jobs, a cron/scheduler, hosted model inference, or a web UI. It is also not a general iMessage, SMS, or Telegram library.
+relaymux is probably the wrong tool if you need a sandbox, a multi-tenant service, durable distributed jobs, a hosted scheduler, hosted model inference, or a web UI. `relaymux schedule` is only a local OS scheduler wrapper for simple recurring prompts. relaymux is also not a general iMessage, SMS, or Telegram library.
 
 ## Troubleshooting
 

@@ -7,7 +7,7 @@ relaymux stores private config, run records, prompts, logs, and local API token 
 ```text
 ~/.relaymux/
   config.json     # private config, written mode 0600
-  state/          # run records, prompts, scripts, daemon state, local API token
+  state/          # run records, prompts, scripts, schedules, daemon state, local API token
   logs/           # LaunchAgent stdout/stderr logs
   tasks/          # optional task scratch space
   reports/        # optional reports
