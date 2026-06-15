@@ -1,162 +1,92 @@
 # relaymux
 
-`relaymux` launches local coding-agent commands in visible `tmux` windows and records each run's status and completion updates under `~/.relaymux`.
+`relaymux` lets you talk to local coding agents from Telegram. It runs the agent on your machine in `tmux`, keeps the background service running, and replies through your Telegram bot.
 
-It is not a model provider, IDE, cloud runtime, or agent framework. It coordinates commands you already run in a terminal, such as `pi`, `codex`, `claude`, `aider`, or a shell script that can work from a prompt.
+iMessage/SMS support exists, but it is beta.
 
-## Quickstart
+## Requirements
 
-You need Node.js 20+, npm, git, and `tmux`. tmux is the terminal multiplexer relaymux uses to keep agent runs visible as attachable sessions and windows. Optional notification adapters such as iMessage/SMS and Telegram are not required for a local launch.
+You need Node.js 20+, npm, git, tmux, and a local agent CLI such as `pi`, `codex`, or `claude`.
 
-Install relaymux and put the command on your PATH:
+## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/avyayv/relaymux/main/install.sh | bash
+git clone https://github.com/mupt-ai/relaymux.git
+cd relaymux
+./install.sh
 export PATH="$HOME/.local/bin:$PATH"
-relaymux --version
-relaymux setup
+```
+
+## Set up Telegram
+
+Create a bot with [BotFather](https://t.me/BotFather), copy the token, then run:
+
+```bash
+relaymux setup --telegram --telegram-bot-token '<telegram-bot-token>'
+```
+
+When prompted, open your bot in Telegram and send `/start`. relaymux stores the token in `~/.relaymux/secrets/telegram-bot-token`, discovers your chat id, writes `~/.relaymux/config.json`, and starts the background service.
+
+Check it:
+
+```bash
 relaymux status
 ```
 
-The installer clones and builds relaymux locally with Node/npm/git, writes app files under `~/.local/lib/relaymux`, and writes a `relaymux` shim under `~/.local/bin`. On Linux, `relaymux setup` expects per-user systemd services (`systemctl --user`) for the daemon; scheduled prompts use cron when `--scheduler auto` is selected.
+## Use it
 
-`relaymux setup` creates or updates `~/.relaymux/config.json`, installs/restarts the per-user background service when supported, and prints the config path, log path, status, and next command. macOS uses launchd LaunchAgents; Linux uses a systemd user unit (`systemctl --user`). If the service manager rejects the service, setup prints the service file path, daemon logs, inspect command, common causes, and the exact retry command.
+Send your Telegram bot a message like:
 
-For a config-only setup without starting the background service, use `relaymux setup --no-launch-agent` (command names remain launch-agent-compatible for now). `relaymux init` is the lower-level config writer; it refuses to overwrite an existing config unless you pass `--force`.
-
-The generated config includes a harmless `custom` agent that prints its prompt, which is useful for checking that tmux/status behavior works before wiring a real agent:
-
-```bash
-mkdir -p /tmp/relaymux-demo
-relaymux launch \
-  --repo /tmp/relaymux-demo \
-  --agent custom \
-  --name hello-relaymux \
-  --hold \
-  --prompt "hello from relaymux"
+```text
+Open an agent in ~/code/my-app and inspect the failing tests.
 ```
 
-`--repo` is the command's working directory; it does not need to be a Git repository for this basic launch. `--hold` keeps the tmux window open after the command exits so you can inspect it. relaymux creates the shared tmux session automatically when it launches the first run.
+relaymux passes the message to your configured local orchestrator and replies in Telegram.
 
-Attach to the shared tmux session:
+Manual notification test:
+
+```bash
+relaymux notify --from test --reply-mode telegram --message "hello from relaymux"
+```
+
+## Optional: launch an agent manually
+
+```bash
+relaymux launch \
+  --repo ~/code/my-app \
+  --agent pi \
+  --name inspect-tests \
+  --prompt "Inspect the failing tests and summarize what is broken."
+```
+
+Attach to the tmux session:
 
 ```bash
 tmux attach -t agents
 ```
 
-In tmux, you should see a window named `hello-relaymux`. Detach with `Ctrl-b d`, then inspect local status:
+Detach with `Ctrl-b d`.
+
+## iMessage/SMS beta
+
+iMessage/SMS depends on a working local `imsg` command. The minimal setup is:
 
 ```bash
+relaymux setup --imsg
+```
+
+relaymux will try to show recent chats. Pick one, then text that chat to use relaymux. If chat discovery does not work, pass the chat id directly:
+
+```bash
+relaymux setup --imsg --chat-id '<chat-id-or-phone-number>'
+```
+
+## Troubleshooting
+
+```bash
+relaymux doctor
+relaymux status-launch-agent
 relaymux status --history
 ```
 
-## Use A Real Agent
-
-At minimum, relaymux needs a shared tmux session name and an agent command template in `~/.relaymux/config.json`. An agent command can be interactive or noninteractive; relaymux's job is to start it with the prompt you provide.
-
-```json
-{
-  "session": "agents",
-  "agents": {
-    "my-agent": {
-      "command": ["my-agent-cli", "--prompt-file", "{promptFile}"]
-    }
-  }
-}
-```
-
-The `command` value is a list of command arguments. relaymux replaces `{promptFile}` with the path to the prompt file it writes for the run. Replace `my-agent-cli` with the agent or wrapper command you actually use. The prompt-file style is the simplest path; other prompt-passing modes and placeholders are covered in [Configuration](docs/configuration.md).
-
-Write a prompt file:
-
-```bash
-mkdir -p ~/.relaymux/tasks
-cat > ~/.relaymux/tasks/first-agent.md <<'EOF'
-Read the README, summarize what this project does, and report any unclear setup steps.
-EOF
-```
-
-A subagent is the command relaymux starts for one run. Launch one from that prompt file:
-
-```bash
-relaymux launch \
-  --repo ~/code/my-project \
-  --agent my-agent \
-  --name first-agent \
-  --prompt-file ~/.relaymux/tasks/first-agent.md
-```
-
-By default this creates a new tmux window in the shared `agents` session. relaymux does not create panes or splits; many terminal UIs display tmux windows like tabs.
-
-Use a separate session only when you explicitly want to isolate a group of windows:
-
-```bash
-relaymux launch --session my-task --repo ~/code/my-project --agent my-agent --prompt-file ~/.relaymux/tasks/first-agent.md
-```
-
-Inside every launched agent process, relaymux injects `RELAYMUX_NOTIFY_COMMAND`, a shell command string that records local progress or completion updates for that run:
-
-```bash
-$RELAYMUX_NOTIFY_COMMAND --message "Finished: checked the README and found no blockers."
-```
-
-## Optional Notifications
-
-relaymux works without message adapters. If you want user-visible updates away from the terminal, configure an adapter after the local flow works.
-
-iMessage/SMS through macOS Messages and an external `imsg` CLI:
-
-```bash
-relaymux setup --imsg --chat-id <chat-id-or-phone-number>
-relaymux status-launch-agent
-relaymux status
-```
-
-`relaymux setup --imsg` creates or updates `~/.relaymux/config.json`, tries to discover recent `imsg` chats when `--chat-id` is omitted, installs/restarts the LaunchAgent unless `--no-launch-agent` is passed, and prints next steps. Re-running `relaymux init --imsg` or `relaymux setup --imsg` adds or updates the adapter on the existing config; `--force` is only for replacing the whole config.
-
-After setup, text the configured chat with a small request. Use a chat where your request appears as an incoming message to the Mac's Messages account; messages marked by Messages as sent by that Mac are ignored so relaymux does not respond to its own replies.
-
-Telegram through a Telegram bot:
-
-```bash
-relaymux setup --telegram \
-  --telegram-chat-id <telegram-chat-id> \
-  --telegram-bot-token-file ~/.relaymux/secrets/telegram-bot-token
-relaymux status-launch-agent
-relaymux status
-```
-
-Then use `relaymux notify --reply-mode imessage` or `relaymux notify --reply-mode telegram` from an agent when you want an adapter-delivered update. In this command, reply mode means the delivery channel for a user-visible notification.
-
-## Scheduled Prompts
-
-Use `relaymux schedule` when you want the configured orchestrator asked on a recurring local schedule:
-
-```bash
-relaymux schedule add \
-  --name weekday-checkin \
-  --cron "0 9 * * 1-5" \
-  --reply-mode imessage \
-  --prompt "Check the active agent runs and send me a concise status."
-```
-
-Scheduled prompts are local OS jobs. The default `auto` scheduler uses macOS launchd on macOS and cron elsewhere, including Linux. Each job runs `relaymux ask --no-wait` when the schedule fires; relaymux does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. Use `relaymux schedule add --dry-run` to inspect the generated job before installing it, or pass `--scheduler launchd|cron` when you want a specific backend. On Linux, install a cron implementation such as cron/cronie if `crontab` is missing.
-
-## Docs
-
-- [Configuration](docs/configuration.md): config shape, prompt passing, sessions, and common launch patterns.
-- [Integrations](docs/integrations.md): local HTTP API for agent callbacks, `relaymux ask`, `relaymux notify`, scheduled prompts, iMessage/SMS, and Telegram.
-- [Operations](docs/operations.md): install footprint, uninstall, background service, watchdog, safety model, troubleshooting, and development.
-
-## Development
-
-```bash
-npm ci
-npm run validate
-```
-
-Issues and pull requests are welcome. Please keep public examples free of private paths, phone numbers, chat ids, tokens, and secrets.
-
-## License
-
-MIT
+Logs live in `~/.relaymux/logs`. Config lives at `~/.relaymux/config.json`.

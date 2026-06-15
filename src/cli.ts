@@ -128,7 +128,11 @@ async function handleSetup(flags, io, platform = process.platform) {
         io.stdout.write("Would configure the iMessage/SMS adapter.\n");
       }
     }
-    if (wantsTelegram) io.stdout.write("Would configure the Telegram adapter.\n");
+    if (wantsTelegram) {
+      io.stdout.write("Would configure the Telegram adapter.\n");
+      if (!flags.telegramChatId) io.stdout.write("Would discover the Telegram chat id after you send /start to the bot.\n");
+      if (flags.telegramBotToken) io.stdout.write("Would store the Telegram bot token under ~/.relaymux/secrets.\n");
+    }
     io.stdout.write(shouldInstallLaunchAgent
       ? `Would install/restart the ${backgroundServiceDryRunName(platform)}.\n`
       : "Would skip background service installation because --no-launch-agent was passed.\n");
@@ -218,7 +222,7 @@ async function handleInit(flags, io, platform = process.platform) {
       }, io.env);
       labels.push("iMessage/SMS adapter");
     } else if (wantsTelegram) {
-      config = buildTelegramConfig(initTelegramOptionsFromFlags(flags), io.env);
+      config = buildTelegramConfig(await initTelegramOptionsFromFlags(flags, io, io.env), io.env);
       labels.push("Telegram adapter");
     } else {
       config = defaultConfig(io.env);
@@ -238,10 +242,10 @@ async function handleInit(flags, io, platform = process.platform) {
   }
 
   if (wantsTelegram && wantsImsg) {
-    config = withTelegramIntegration(config, initTelegramOptionsFromFlags(flags));
+    config = withTelegramIntegration(config, await initTelegramOptionsFromFlags(telegramFlagsWithExisting(flags, config), io, io.env));
     labels.push("Telegram adapter");
   } else if (updatedExisting && wantsTelegram) {
-    config = withTelegramIntegration(config, initTelegramOptionsFromFlags(flags));
+    config = withTelegramIntegration(config, await initTelegramOptionsFromFlags(telegramFlagsWithExisting(flags, config), io, io.env));
     labels.push("Telegram adapter");
   }
 
@@ -282,6 +286,16 @@ function backgroundServiceStatusName(status, platform) {
 function backgroundServiceNeedsSetupFailure(status) {
   if (status.serviceManager === "unsupported") return false;
   return !status.loaded;
+}
+
+function telegramFlagsWithExisting(flags, config) {
+  const telegram = getIntegration(config, "telegram");
+  return {
+    ...flags,
+    telegramChatId: flags.telegramChatId || telegram.chatId,
+    telegramBotTokenFile: flags.telegramBotTokenFile || telegram.botTokenFile,
+    telegramBotTokenEnv: flags.telegramBotTokenEnv || telegram.botTokenEnv,
+  };
 }
 
 function cloneConfig(config) {
@@ -1040,6 +1054,8 @@ Start here:
   relaymux status
 
 Usage:
+  relaymux setup --telegram --telegram-bot-token <token>
+  relaymux setup --imsg
   relaymux setup [--imsg|--telegram] [--chat-id <id>] [--telegram-chat-id <id>] [--no-launch-agent] [--dry-run]
   relaymux init [--force] [--config <path>]
   relaymux init --imsg [--chat-id <id>] [--install-launch-agent]
@@ -1059,9 +1075,10 @@ Usage:
 
 Setup/init options:
   --imsg                    Enable the optional iMessage/SMS adapter and prompt for a chat when possible
-  --telegram                Enable the optional Telegram adapter
-  --chat-id <id>            Messages chat id/phone for imsg history/send
-  --telegram-chat-id <id>   Telegram chat id for Bot API sendMessage
+  --telegram                Enable the optional Telegram adapter; waits for /start when chat id is missing
+  --chat-id <id>            Messages chat id/phone for imsg history/send; omit to pick from recent chats
+  --telegram-chat-id <id>   Telegram chat id for Bot API sendMessage; omit to discover from /start
+  --telegram-bot-token <token>      Telegram bot token to store in ~/.relaymux/secrets/telegram-bot-token
   --telegram-bot-token-env <name>   Env var that contains the Telegram bot token (default TELEGRAM_BOT_TOKEN)
   --telegram-bot-token-file <path>  File that contains the Telegram bot token (contents are never printed)
   --telegram-parse-mode <mode>      Optional Telegram parse_mode such as MarkdownV2 or HTML

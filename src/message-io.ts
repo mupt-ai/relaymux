@@ -55,12 +55,13 @@ export function isIncomingUserMessage(message) {
   return Boolean(message && !message.isFromMe && (message.text?.trim() || message.attachments?.length));
 }
 
-export function formatIncomingForPrompt(messages) {
+export function formatIncomingForPrompt(messages, adapter = "imessage") {
   const normalized = normalizeMessages(messages);
+  const channel = adapter === "telegram" ? "Telegram bot chat" : adapter === "imessage" ? "iMessage/SMS adapter chat" : "message adapter chat";
   if (normalized.length === 1) {
     const message = normalized[0];
     const attachments = formatAttachments(message.attachments);
-    return `New incoming message from the configured iMessage/SMS adapter chat (${message.createdAt || "unknown time"}, message id ${message.id}).\n\n${message.text || "[no text]"}${attachments}\n\nReply directly and concisely. Do not mention daemon internals.`;
+    return `New incoming message from the configured ${channel} (${message.createdAt || "unknown time"}, message id ${message.id}).\n\n${message.text || "[no text]"}${attachments}\n\nReply directly and concisely. Do not mention daemon internals.`;
   }
 
   const body = normalized
@@ -69,7 +70,7 @@ export function formatIncomingForPrompt(messages) {
       return `- ${message.createdAt || "unknown time"} id=${message.id}: ${message.text || "[no text]"}${attachments}`;
     })
     .join("\n");
-  return `The configured iMessage/SMS adapter chat sent these new messages, in order:\n${body}\n\nRespond once, directly and concisely. Do not mention daemon internals.`;
+  return `The configured ${channel} sent these new messages, in order:\n${body}\n\nRespond once, directly and concisely. Do not mention daemon internals.`;
 }
 
 export function splitMessage(text, maxChars = 1400) {
