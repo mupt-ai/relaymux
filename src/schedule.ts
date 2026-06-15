@@ -62,17 +62,17 @@ const CRON_FIELDS = [
   { name: "day of week", key: "Weekday", min: 0, max: 7, names: WEEKDAY_NAMES },
 ];
 
-export function handleSchedule({ flags, positionals, configInfo, stateDir, binPath, io }) {
+export function handleSchedule({ flags, positionals, configInfo, stateDir, binPath, io, platform = process.platform }) {
   const action = String(positionals[0] || "help");
 
   switch (action) {
     case "add":
-      return handleScheduleAdd({ flags, configInfo, stateDir, binPath, io });
+      return handleScheduleAdd({ flags, configInfo, stateDir, binPath, io, platform });
     case "list":
       return handleScheduleList({ flags, stateDir, io });
     case "remove":
     case "rm":
-      return handleScheduleRemove({ flags, positionals, configInfo, stateDir, io });
+      return handleScheduleRemove({ flags, positionals, configInfo, stateDir, io, platform });
     case "help":
       io.stdout.write(scheduleHelpText());
       return 0;
@@ -110,7 +110,7 @@ schedule fires.
 `;
 }
 
-function handleScheduleAdd({ flags, configInfo, stateDir, binPath, io }) {
+function handleScheduleAdd({ flags, configInfo, stateDir, binPath, io, platform = process.platform }) {
   if (!configInfo.exists) {
     throw new Error(`Config does not exist at ${configInfo.path}. Run relaymux setup first.`);
   }
@@ -126,6 +126,7 @@ function handleScheduleAdd({ flags, configInfo, stateDir, binPath, io }) {
     configPath: configInfo.path,
     stateDir,
     binPath,
+    platform,
   });
 
   if (flags.dryRun) {
@@ -150,7 +151,7 @@ function handleScheduleAdd({ flags, configInfo, stateDir, binPath, io }) {
 
   installSchedulePlan(plan, io);
   io.stdout.write(`Installed schedule ${plan.name} with ${plan.scheduler}\n`);
-  io.stdout.write("Requires the relaymux daemon to be running when the schedule fires; use `relaymux restart-launch-agent` if needed.\n");
+  io.stdout.write(`Requires the relaymux daemon to be running when the schedule fires; use \`relaymux restart-launch-agent\` if needed (${platform === "linux" ? "Linux systemd user service" : platform === "darwin" ? "macOS LaunchAgent" : "background service"}).\n`);
   return 0;
 }
 
@@ -170,10 +171,10 @@ function handleScheduleList({ flags, stateDir, io }) {
   return 0;
 }
 
-function handleScheduleRemove({ flags, positionals, configInfo, stateDir, io }) {
+function handleScheduleRemove({ flags, positionals, configInfo, stateDir, io, platform = process.platform }) {
   const name = normalizeScheduleName(flags.name || positionals[1]);
   const existing = readScheduleMetadata(scheduleMetadataPath(stateDir, name));
-  const scheduler = existing?.scheduler || resolveScheduleBackend(flags.scheduler);
+  const scheduler = existing?.scheduler || resolveScheduleBackend(flags.scheduler, platform);
   const label = existing?.label || (scheduler === "launchd" ? scheduleLaunchAgentLabel(configInfo.config, name) : "");
   const plistPath = existing?.plistPath || (label ? scheduleLaunchAgentPath(label) : "");
   const scheduleDir = scheduleDirectory(stateDir, name);
@@ -617,15 +618,19 @@ function readCrontab({ allowUnavailable }) {
   if (result.status === 0) {
     return { available: true, text: normalizeCrontabText(result.stdout) };
   }
-  const detail = `${result.stderr || ""}\n${result.stdout || ""}`.toLowerCase();
-  const hasNoCrontab = detail.includes("no crontab") || detail.includes("no crontab for");
+  const outputDetail = `${result.stderr || ""}\n${result.stdout || ""}`.toLowerCase();
+  const hasNoCrontab = outputDetail.includes("no crontab") || outputDetail.includes("no crontab for");
   if (hasNoCrontab) {
     return { available: true, text: "" };
   }
   if (allowUnavailable) {
     return { available: false, text: "" };
   }
-  throw new Error(`Could not read crontab: ${firstLine(result.stderr) || firstLine(result.stdout) || result.error?.message || `exit ${result.status}`}`);
+  const unavailable = result.error?.code === "ENOENT";
+  const detail = unavailable
+    ? "crontab command not found; install cron/cronie or use --dry-run to copy the generated entry manually"
+    : firstLine(result.stderr) || firstLine(result.stdout) || result.error?.message || `exit ${result.status}`;
+  throw new Error(`Could not read crontab: ${detail}`);
 }
 
 function replaceCronMarker(currentText, marker, cronLine) {

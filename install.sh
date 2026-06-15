@@ -99,6 +99,11 @@ Next:
   relaymux setup
   relaymux status
 
+Background service:
+  macOS uses a per-user launchd LaunchAgent.
+  Linux uses a systemd user service via: systemctl --user
+  Scheduled prompts use cron on Linux when --scheduler auto is selected.
+
 Optional adapters:
   relaymux setup --imsg --chat-id <chat-id-or-phone-number>
   relaymux setup --telegram --telegram-chat-id <chat-id>

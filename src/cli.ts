@@ -9,7 +9,7 @@ import { assertNoFatalCommandFindings } from "./command-validation.js";
 import { collectDoctorChecks } from "./doctor.js";
 import { defaultConfig, defaultConfigPath, getIntegration, isIntegrationEnabled, loadConfig, resolveLogDir, resolveStateDir, writeConfig } from "./config.js";
 import { runDaemon } from "./daemon.js";
-import { getLaunchAgentStatus, getLaunchAgentWatchdogStatus, installLaunchAgent, launchAgentPath, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
+import { backgroundServicePath, getLaunchAgentStatus, getLaunchAgentWatchdogStatus, installLaunchAgent, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
 import { handleNotify } from "./notify.js";
 import { handleSchedule, scheduleHelpText } from "./schedule.js";
 import { webhookConfig, webhookStatus } from "./webhook.js";
@@ -25,6 +25,7 @@ import { isReplyMode, replyModesText } from "./reply-modes.js";
 
 export async function main(argv, io = defaultIo()) {
   try {
+    const platform = io.platform || process.platform;
     const parsed = parseArgv(argv);
     if (parsed.flags.version || parsed.command === "version") {
       io.stdout.write("relaymux 0.1.0\n");
@@ -40,11 +41,11 @@ export async function main(argv, io = defaultIo()) {
     }
 
     if (parsed.command === "init") {
-      return handleInit(parsed.flags, io);
+      return handleInit(parsed.flags, io, platform);
     }
 
     if (parsed.command === "setup") {
-      return handleSetup(parsed.flags, io);
+      return handleSetup(parsed.flags, io, platform);
     }
 
     const configInfo = loadConfig({ configPath: parsed.flags.config, env: io.env });
@@ -56,7 +57,7 @@ export async function main(argv, io = defaultIo()) {
       case "launch":
         return handleLaunch(parsed.flags, configInfo, stateDir, io);
       case "status":
-        return handleStatus(parsed.flags, configInfo, stateDir, io);
+        return handleStatus(parsed.flags, configInfo, stateDir, io, platform);
       case "notify":
         await handleNotify({
           flags: parsed.flags,
@@ -77,6 +78,7 @@ export async function main(argv, io = defaultIo()) {
           stateDir,
           binPath: process.argv[1],
           io,
+          platform,
         });
       case "daemon":
         return await runDaemon({ flags: parsed.flags, configInfo, stateDir, io });
@@ -85,20 +87,20 @@ export async function main(argv, io = defaultIo()) {
       case "supervise-tmux":
         return await handleSuperviseTmux(parsed.flags, configInfo, stateDir, io);
       case "install-launch-agent":
-        installLaunchAgent({ flags: parsed.flags, configInfo, binPath: process.argv[1], io });
+        installLaunchAgent({ flags: parsed.flags, configInfo, binPath: process.argv[1], io, platform });
         return 0;
       case "restart-launch-agent":
-        restartLaunchAgent({ flags: parsed.flags, configInfo, binPath: process.argv[1], io });
+        restartLaunchAgent({ flags: parsed.flags, configInfo, binPath: process.argv[1], io, platform });
         return 0;
       case "status-launch-agent":
       case "launch-agent-status":
-        printLaunchAgentStatus({ config: configInfo.config, io, json: Boolean(parsed.flags.json) });
+        printLaunchAgentStatus({ config: configInfo.config, io, json: Boolean(parsed.flags.json), platform });
         return 0;
       case "uninstall-launch-agent":
-        uninstallLaunchAgent({ config: configInfo.config, io });
+        uninstallLaunchAgent({ config: configInfo.config, io, platform });
         return 0;
       case "doctor":
-        return handleDoctor(configInfo, io);
+        return handleDoctor(configInfo, io, platform);
       default:
         throw new Error(`Unknown command "${parsed.command}"`);
     }
@@ -108,7 +110,7 @@ export async function main(argv, io = defaultIo()) {
   }
 }
 
-async function handleSetup(flags, io) {
+async function handleSetup(flags, io, platform = process.platform) {
   const wantsImsg = Boolean(flags.imsg || flags.preset === "imsg");
   const wantsTelegram = Boolean(flags.telegram || flags.preset === "telegram");
   const wantsAdapter = wantsImsg || wantsTelegram;
@@ -128,8 +130,8 @@ async function handleSetup(flags, io) {
     }
     if (wantsTelegram) io.stdout.write("Would configure the Telegram adapter.\n");
     io.stdout.write(shouldInstallLaunchAgent
-      ? "Would install/restart the background LaunchAgent and watchdog.\n"
-      : "Would skip LaunchAgent installation because --no-launch-agent was passed.\n");
+      ? `Would install/restart the ${backgroundServiceDryRunName(platform)}.\n`
+      : "Would skip background service installation because --no-launch-agent was passed.\n");
     return 0;
   }
 
@@ -137,7 +139,7 @@ async function handleSetup(flags, io) {
     await handleInit({
       ...flags,
       installLaunchAgent: false,
-    }, io);
+    }, io, platform);
     configInfo = loadConfig({ configPath: flags.config, env: io.env });
   } else {
     io.stdout.write(`Using existing config at ${configInfo.path}\n`);
@@ -152,13 +154,14 @@ async function handleSetup(flags, io) {
       configInfo,
       binPath: process.argv[1],
       io,
+      platform,
     });
   }
 
-  const status = handleDoctor(configInfo, io);
-  const launchAgent = getLaunchAgentStatus(configInfo.config);
-  if (shouldInstallLaunchAgent && flags.load !== false && launchAgent.supported && !launchAgent.loaded) {
-    io.stderr.write("Setup wrote the config, but the background LaunchAgent is not loaded. Review the LaunchAgent detail above and run `relaymux restart-launch-agent` after fixing it.\n");
+  const status = handleDoctor(configInfo, io, platform);
+  const launchAgent = getLaunchAgentStatus(configInfo.config, { platform, env: io.env });
+  if (shouldInstallLaunchAgent && flags.load !== false && backgroundServiceNeedsSetupFailure(launchAgent)) {
+    io.stderr.write(`Setup wrote the config, but the ${backgroundServiceStatusName(launchAgent, platform)} is not running. Review the service detail above and run \`relaymux restart-launch-agent\` after fixing it.\n`);
     return 1;
   }
   if (status === 0) {
@@ -168,9 +171,9 @@ async function handleSetup(flags, io) {
     io.stdout.write("Next steps:\n");
     if (isIntegrationEnabled(configInfo.config, "imessage")) {
       if (shouldInstallLaunchAgent) {
-        io.stdout.write("  1. Text the configured iMessage/SMS chat; relaymux should reply from the background LaunchAgent.\n");
+        io.stdout.write("  1. Text the configured iMessage/SMS chat; relaymux should reply from the background service.\n");
       } else {
-        io.stdout.write("  1. Run `relaymux restart-launch-agent` when you are ready to receive iMessage/SMS requests in the background.\n");
+        io.stdout.write("  1. Run `relaymux restart-launch-agent` when you are ready to receive iMessage/SMS requests in the background service.\n");
       }
     } else if (isIntegrationEnabled(configInfo.config, "telegram")) {
       if (shouldInstallLaunchAgent) {
@@ -189,7 +192,7 @@ async function handleSetup(flags, io) {
   return status;
 }
 
-async function handleInit(flags, io) {
+async function handleInit(flags, io, platform = process.platform) {
   const wantsImsg = Boolean(flags.imsg || flags.preset === "imsg");
   const wantsTelegram = Boolean(flags.telegram || flags.preset === "telegram");
   const wantsAdapter = wantsImsg || wantsTelegram;
@@ -247,7 +250,7 @@ async function handleInit(flags, io) {
   io.stdout.write(`${updatedExisting ? "Updated" : "Created"} ${target}${labels.length ? ` with ${labels.join(" and ")} defaults` : " with core defaults"}\n`);
   io.stdout.write(`relaymux home: ${homeDir} (state ${resolveStateDir(config, io.env)}, logs ${resolveLogDir(config, io.env)})\n`);
   if (labels.length) {
-    io.stdout.write("Next: relaymux restart-launch-agent\n");
+    io.stdout.write("Next: relaymux restart-launch-agent (starts the background service)\n");
     io.stdout.write("Then: relaymux status-launch-agent && relaymux status\n");
   } else {
     io.stdout.write("Tip: add optional adapters later with `relaymux init --imsg` or `relaymux init --telegram`.\n");
@@ -258,9 +261,27 @@ async function handleInit(flags, io) {
       configInfo: { config, path: target, exists: true },
       binPath: process.argv[1],
       io,
+      platform,
     });
   }
   return 0;
+}
+
+function backgroundServiceDryRunName(platform) {
+  if (platform === "darwin") return "macOS LaunchAgent and watchdog";
+  if (platform === "linux") return "Linux systemd user service";
+  return `background service if supported on ${platform}`;
+}
+
+function backgroundServiceStatusName(status, platform) {
+  if (status.serviceManager === "systemd") return "Linux systemd user service";
+  if (status.serviceManager === "launchd" || platform === "darwin") return "macOS LaunchAgent";
+  return "background service";
+}
+
+function backgroundServiceNeedsSetupFailure(status) {
+  if (status.serviceManager === "unsupported") return false;
+  return !status.loaded;
 }
 
 function cloneConfig(config) {
@@ -460,7 +481,7 @@ async function handleAsk(flags, positionals, configInfo, io) {
 
 function handleStartTmux(flags, configInfo, stateDir, io) {
   if (!flags.allowTmuxDaemon) {
-    throw new Error("start-tmux daemon mode is retired: the relaymux background service must run as a direct LaunchAgent outside tmux. Use `relaymux restart-launch-agent` for the background service and `relaymux launch` for agent tmux tabs.");
+    throw new Error("start-tmux daemon mode is retired: the relaymux background service must run directly outside tmux (LaunchAgent on macOS, systemd user service on Linux). Use `relaymux restart-launch-agent` for the background service and `relaymux launch` for agent tmux tabs.");
   }
   if (!flags.session) {
     throw new Error("Missing --session <name> for start-tmux");
@@ -493,7 +514,7 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
     io.stdout.write(`# session: ${session}\n`);
     io.stdout.write(`# window: ${windowName}\n`);
     io.stdout.write(`# cwd: ${cwd}\n`);
-    io.stdout.write("# leaving configured LaunchAgent/background service alone\n");
+    io.stdout.write("# leaving configured background service alone\n");
     if (flags.restart !== false) {
       io.stdout.write(`# would replace existing tmux window ${session}:${windowName} if present\n`);
     }
@@ -578,7 +599,7 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
 
 async function handleSuperviseTmux(flags, configInfo, stateDir, io) {
   if (!flags.allowTmuxDaemon) {
-    throw new Error("supervise-tmux daemon mode is retired: the relaymux background service must run direct outside tmux.");
+    throw new Error("supervise-tmux daemon mode is retired: the relaymux background service must run directly outside tmux.");
   }
   const config = configInfo.config;
   const session = String(flags.session || io.env.RELAYMUX_SESSION || config.session || "agents");
@@ -732,7 +753,7 @@ function normalizePositiveInteger(value, fallback) {
   return Math.floor(number);
 }
 
-function handleStatus(flags, configInfo, stateDir, io) {
+function handleStatus(flags, configInfo, stateDir, io, platform = process.platform) {
   const config = configInfo.config;
   const session = flags.session ? String(flags.session) : undefined;
   const windows = listAgentWindows({ session });
@@ -756,7 +777,7 @@ function handleStatus(flags, configInfo, stateDir, io) {
   }
 
   rows.sort((a, b) => String(b.started).localeCompare(String(a.started)));
-  const daemon = daemonStatus(config, configInfo.path, io.env);
+  const daemon = daemonStatus(config, configInfo.path, io.env, platform);
 
   if (flags.json) {
     io.stdout.write(`${JSON.stringify({ daemon, runs: rows }, null, 2)}\n`);
@@ -764,18 +785,10 @@ function handleStatus(flags, configInfo, stateDir, io) {
   }
 
   const launchAgent: any = daemon.launchAgent;
-  const launchAgentText = launchAgent.supported
-    ? launchAgent.loaded
-      ? `LaunchAgent ${launchAgent.label} loaded${launchAgent.running ? ` pid=${launchAgent.pid}` : ""}`
-      : `LaunchAgent ${launchAgent.label} not loaded`
-    : `LaunchAgent unsupported on ${process.platform}`;
+  const launchAgentText = formatBackgroundServiceSummary(launchAgent, platform);
   io.stdout.write(`Home: ${daemon.homeDir}; config ${daemon.configPath}; state ${daemon.stateDir}; logs ${daemon.logDir}\n`);
   const watchdog: any = daemon.launchAgentWatchdog;
-  const watchdogText = watchdog?.enabled
-    ? watchdog.loaded
-      ? `watchdog ${watchdog.label} loaded every ${watchdog.intervalSeconds}s`
-      : `watchdog ${watchdog.label} not loaded`
-    : "watchdog disabled";
+  const watchdogText = formatBackgroundWatchdogSummary(watchdog, platform);
   io.stdout.write(`Background service: ${daemon.enabled ? "enabled" : "disabled"}; mode ${daemon.launchMode}/background (no tmux); ${launchAgentText}; ${watchdogText}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}\n`);
   io.stdout.write(`Agent tmux: session mode ${daemon.agentSessionMode}; ${session ? `filter session ${session}` : "showing all relaymux-managed sessions"}; tabs are tmux windows, never panes/splits.\n`);
 
@@ -788,7 +801,34 @@ function handleStatus(flags, configInfo, stateDir, io) {
   return 0;
 }
 
-function daemonStatus(config, configPath, env = process.env) {
+function formatBackgroundServiceSummary(status, platform) {
+  if (status.serviceManager === "systemd") {
+    if (!status.supported) return `systemd user service ${status.serviceName} unavailable`;
+    return status.loaded
+      ? `systemd user service ${status.serviceName} active${status.running && status.pid ? ` pid=${status.pid}` : ""}`
+      : `systemd user service ${status.serviceName} not active`;
+  }
+  if (status.serviceManager === "launchd" || platform === "darwin") {
+    return status.supported
+      ? status.loaded
+        ? `LaunchAgent ${status.label} loaded${status.running ? ` pid=${status.pid}` : ""}`
+        : `LaunchAgent ${status.label} not loaded`
+      : `LaunchAgent unsupported on ${platform}`;
+  }
+  return `background service unsupported on ${platform}`;
+}
+
+function formatBackgroundWatchdogSummary(watchdog, platform) {
+  if (platform === "linux") return "restart policy systemd Restart=always";
+  if (watchdog?.enabled) {
+    return watchdog.loaded
+      ? `watchdog ${watchdog.label} loaded every ${watchdog.intervalSeconds}s`
+      : `watchdog ${watchdog.label} not loaded`;
+  }
+  return "watchdog disabled";
+}
+
+function daemonStatus(config, configPath, env = process.env, platform = process.platform) {
   const agentSessionMode = resolveTmuxSessionMode({ config });
   return {
     enabled: config.daemon?.enabled !== false,
@@ -800,9 +840,10 @@ function daemonStatus(config, configPath, env = process.env) {
     agentSessionMode,
     featureSessionMode: agentSessionMode,
     webhook: webhookStatus(config),
-    launchAgentPath: launchAgentPath(config),
-    launchAgent: getLaunchAgentStatus(config),
-    launchAgentWatchdog: getLaunchAgentWatchdogStatus(config),
+    backgroundServicePath: backgroundServicePath(config, { platform, env }),
+    launchAgentPath: backgroundServicePath(config, { platform, env }),
+    launchAgent: getLaunchAgentStatus(config, { platform, env }),
+    launchAgentWatchdog: getLaunchAgentWatchdogStatus(config, { platform, env }),
   };
 }
 
@@ -840,8 +881,8 @@ function targetTab(target) {
   return tab.replace(/\.\d+$/, "");
 }
 
-function handleDoctor(configInfo, io) {
-  const checks = collectDoctorChecks(configInfo.config, configInfo, io.env);
+function handleDoctor(configInfo, io, platform = process.platform) {
+  const checks = collectDoctorChecks(configInfo.config, configInfo, io.env, { platform });
   for (const check of checks) {
     io.stdout.write(`${doctorStatusLabel(check)}\t${check.name}\t${check.detail}\n`);
   }
@@ -978,6 +1019,7 @@ function formatTable(rows, columns) {
 function defaultIo() {
   return {
     env: process.env,
+    platform: process.platform,
     stdin: process.stdin,
     stdout: process.stdout,
     stderr: process.stderr,
@@ -988,7 +1030,7 @@ function helpText() {
   return `relaymux - coordinate local CLI agents in tmux with optional notification adapters
 
 Mental model:
-  - The background daemon/local API runs as a direct macOS LaunchAgent outside tmux when installed.
+  - The background daemon/local API runs directly outside tmux (LaunchAgent on macOS, systemd user service on Linux) when installed.
   - By default, all agents open as tmux tabs/windows in one shared session.
   - Managed config/state/logs/prompts/scratch live under ~/.relaymux by default.
   - Use --session only when you explicitly want a separate/new/named tmux session; panes/splits are never used.
@@ -1026,8 +1068,8 @@ Setup/init options:
   --telegram-timeout-ms <ms>        Telegram sendMessage timeout (default 30000)
   --cwd <path>              Working directory for Pi and message commands
   --state-dir <path>        State/token/log directory
-  --install-launch-agent    Install the direct/background LaunchAgent after writing config
-  --no-launch-agent         For setup: skip LaunchAgent installation
+  --install-launch-agent    Install the direct/background service after writing config (LaunchAgent on macOS, systemd on Linux)
+  --no-launch-agent         For setup: skip background service installation
   --dry-run                 For setup: print planned config/service changes without writing files
 
 Migration options:
@@ -1055,8 +1097,8 @@ Launch options:
   --notify-tail-bytes <n>    Max bytes of recent tmux output in nonzero auto notifications
 
 Background service options:
-  --no-load                  Write the LaunchAgent plist without loading it
-  --no-watchdog              Skip installing the periodic LaunchAgent health watchdog
+  --no-load                  Write the service file without loading/starting it
+  --no-watchdog              On macOS, skip installing the periodic LaunchAgent health watchdog
   --keep-tmux-daemon         During migration, do not stop an old relaymux-daemon tmux tab
 
 Request/notify/status options:

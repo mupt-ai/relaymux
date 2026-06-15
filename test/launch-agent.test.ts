@@ -4,14 +4,18 @@ import test from "node:test";
 import { defaultConfig } from "../src/config.js";
 import {
   formatLaunchAgentLoadFailure,
+  formatSystemdServiceLoadFailure,
   installLaunchAgent,
   isCurrentLaunchAgent,
   parseLaunchCtlPrint,
+  parseSystemctlShow,
   renderLaunchAgentPlist,
   renderLaunchAgentReloadScript,
   renderLaunchAgentWatchdogPlist,
+  renderSystemdUserServiceUnit,
   resolveWatchdogSourcePath,
   shouldInstallWatchdog,
+  systemdServiceName,
 } from "../src/launch-agent.js";
 
 
@@ -63,6 +67,27 @@ test("renderLaunchAgentPlist can include a start interval", () => {
   assert.match(plist, /<key>KeepAlive<\/key>\n  <false\/>/);
   assert.match(plist, /<key>StartInterval<\/key>/);
   assert.match(plist, /<integer>60<\/integer>/);
+});
+
+test("renderSystemdUserServiceUnit runs the daemon directly with restart policy", () => {
+  const unit = renderSystemdUserServiceUnit({
+    serviceName: "com.example.relaymux.service",
+    programArguments: ["/usr/bin/node", "/opt/relaymux/relaymux.js", "--config", "/tmp/relaymux config.json", "daemon"],
+    workingDirectory: "/tmp/work dir",
+    standardOutPath: "/tmp/relaymux/daemon.out.log",
+    standardErrorPath: "/tmp/relaymux/daemon.err.log",
+    environment: {
+      PATH: "/usr/local/bin:/usr/bin:/bin",
+      RELAYMUX_CONFIG: "/tmp/relaymux config.json",
+    },
+  });
+
+  assert.match(unit, /\[Service\]/);
+  assert.match(unit, /Type=simple/);
+  assert.match(unit, /ExecStart=\/usr\/bin\/node \/opt\/relaymux\/relaymux\.js --config "\/tmp\/relaymux config\.json" daemon/);
+  assert.match(unit, /Restart=always/);
+  assert.match(unit, /Environment=PATH=\/usr\/local\/bin:\/usr\/bin:\/bin/);
+  assert.match(unit, /StandardOutput=append:\/tmp\/relaymux\/daemon\.out\.log/);
 });
 
 test("renderLaunchAgentPlist can include launchd calendar intervals", () => {
@@ -139,6 +164,7 @@ test("installLaunchAgent direct dry-run does not invoke tmux or set tmux environ
     flags: { dryRun: true },
     configInfo: { config, path: "/tmp/relaymux-config.json", exists: true },
     binPath: "/tmp/relaymux.js",
+    platform: "darwin",
     io: {
       stdout: { write: (chunk) => { stdout += String(chunk); } },
       stderr: { write: () => {} },
@@ -151,6 +177,47 @@ test("installLaunchAgent direct dry-run does not invoke tmux or set tmux environ
   assert.doesNotMatch(stdout, /<string>tmux<\/string>/);
   assert.doesNotMatch(stdout, /TMUX/);
   assert.doesNotMatch(stdout, /RELAYMUX_SESSION/);
+});
+
+test("installLaunchAgent dry-run emits a systemd user unit on Linux", () => {
+  let stdout = "";
+  const config = {
+    ...defaultConfig(),
+    daemon: {
+      ...defaultConfig().daemon,
+      launchAgentLabel: "com.example.relaymux",
+    },
+  };
+
+  installLaunchAgent({
+    flags: { dryRun: true },
+    configInfo: { config, path: "/tmp/relaymux-config.json", exists: true },
+    binPath: "/tmp/relaymux.js",
+    platform: "linux",
+    io: {
+      env: { XDG_CONFIG_HOME: "/tmp/xdg" },
+      stdout: { write: (chunk) => { stdout += String(chunk); } },
+      stderr: { write: () => {} },
+    },
+  });
+
+  assert.match(stdout, /\[Unit\]/);
+  assert.match(stdout, /ExecStart=.*relaymux\.js.*daemon/);
+  assert.match(stdout, /Restart=always/);
+  assert.doesNotMatch(stdout, /<plist/);
+  assert.doesNotMatch(stdout, /launchctl/);
+});
+
+test("systemdServiceName reuses the configured label with a service suffix", () => {
+  const config = {
+    ...defaultConfig(),
+    daemon: {
+      ...defaultConfig().daemon,
+      launchAgentLabel: "com.example.relaymux",
+    },
+  };
+
+  assert.equal(systemdServiceName(config), "com.example.relaymux.service");
 });
 
 test("isCurrentLaunchAgent detects inherited launchd service context", () => {
@@ -191,6 +258,22 @@ test("parseLaunchCtlPrint extracts running status", () => {
   assert.equal(status.lastExitCode, "0");
 });
 
+test("parseSystemctlShow extracts active service status", () => {
+  const status = parseSystemctlShow([
+    "LoadState=loaded",
+    "ActiveState=active",
+    "SubState=running",
+    "MainPID=4321",
+    "ExecMainStatus=0",
+  ].join("\n"));
+
+  assert.equal(status.loadState, "loaded");
+  assert.equal(status.activeState, "active");
+  assert.equal(status.subState, "running");
+  assert.equal(status.pid, 4321);
+  assert.equal(status.lastExitCode, "");
+});
+
 test("formatLaunchAgentLoadFailure includes actionable launchctl context", () => {
   const text = formatLaunchAgentLoadFailure({
     label: "com.example.relaymux",
@@ -209,4 +292,21 @@ test("formatLaunchAgentLoadFailure includes actionable launchctl context", () =>
   assert.match(text, /launchctl print gui\/501\/com\.example\.relaymux/);
   assert.match(text, /common causes/);
   assert.match(text, /relaymux restart-launch-agent/);
+});
+
+test("formatSystemdServiceLoadFailure includes actionable systemd context", () => {
+  const text = formatSystemdServiceLoadFailure({
+    serviceName: "com.example.relaymux.service",
+    result: { status: 1, stdout: "", stderr: "Failed to connect to bus: No medium found\n" },
+    unitPath: "/home/example/.config/systemd/user/com.example.relaymux.service",
+    logDir: "/home/example/.relaymux/logs",
+    stdoutLog: "/home/example/.relaymux/logs/daemon.out.log",
+    stderrLog: "/home/example/.relaymux/logs/daemon.err.log",
+  });
+
+  assert.match(text, /systemctl --user/);
+  assert.match(text, /systemd --user is unavailable/);
+  assert.match(text, /unit: \/home\/example\/\.config\/systemd\/user\/com\.example\.relaymux\.service/);
+  assert.match(text, /journalctl --user -u com\.example\.relaymux\.service -e/);
+  assert.match(text, /fallback: run relaymux daemon/);
 });

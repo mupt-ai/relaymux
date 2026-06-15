@@ -4,7 +4,7 @@ This page covers background service behavior, safety, troubleshooting, and devel
 
 ## Install Footprint
 
-The install script builds relaymux locally, writes app files under `~/.local/lib/relaymux`, and writes a `relaymux` shim under `~/.local/bin` unless you override the install directories.
+The install script builds relaymux locally, writes app files under `~/.local/lib/relaymux`, and writes a `relaymux` shim under `~/.local/bin` unless you override the install directories. Service files are created only when you run setup/restart: `~/Library/LaunchAgents` on macOS or `~/.config/systemd/user` (or `$XDG_CONFIG_HOME/systemd/user`) on Linux.
 
 Stop the background service and remove the installed binary:
 
@@ -21,7 +21,7 @@ rm -rf ~/.relaymux
 
 ## Background Service
 
-The daemon is optional for local launches, but useful for the local API and adapter delivery. On macOS, `relaymux setup`, `relaymux install-launch-agent`, or `relaymux restart-launch-agent` can install it as a per-user LaunchAgent. The daemon runs outside tmux.
+The daemon is optional for local launches, but useful for the local API and adapter delivery. `relaymux setup`, `relaymux install-launch-agent`, and `relaymux restart-launch-agent` install the per-user background service for the current platform. The command names are kept for CLI compatibility: macOS uses a launchd LaunchAgent, while Linux uses a systemd user service (`systemctl --user`). The daemon runs outside tmux.
 
 ```bash
 relaymux restart-launch-agent
@@ -29,7 +29,9 @@ relaymux status-launch-agent
 relaymux uninstall-launch-agent
 ```
 
-`restart-launch-agent` writes two LaunchAgents on macOS: the main relaymux daemon and a small watchdog. The watchdog runs once a minute, checks the daemon's launchd state plus `/health` on the local API, and bootstraps or kickstarts the daemon if it was killed or left unloaded. Use `--no-watchdog` only when you intentionally want to manage recovery yourself.
+On macOS, `restart-launch-agent` writes two LaunchAgents: the main relaymux daemon and a small watchdog. The watchdog runs once a minute, checks the daemon's launchd state plus `/health` on the local API, and bootstraps or kickstarts the daemon if it was killed or left unloaded. Use `--no-watchdog` only when you intentionally want to manage recovery yourself.
+
+On Linux, `restart-launch-agent` writes `~/.config/systemd/user/<service>.service` (or `$XDG_CONFIG_HOME/systemd/user/<service>.service`) and runs `systemctl --user daemon-reload`, `systemctl --user enable <service>`, and `systemctl --user restart <service>`. The unit uses `Restart=always`, so no separate watchdog unit is installed. If `systemctl --user` cannot connect to a user bus, run `relaymux daemon` in the foreground or enable user services for the account (for example, a real systemd login session and, on headless servers, `loginctl enable-linger "$USER"`).
 
 Turn on wrapper-level exit notifications if you want a fallback even when the agent forgets to call `relaymux notify`. `failure` means only nonzero exits notify; `always` also notifies on success; `never` is the default:
 
@@ -51,14 +53,23 @@ relaymux is probably the wrong tool if you need a sandbox, a multi-tenant servic
 
 ## Troubleshooting
 
-If setup says the LaunchAgent is not loaded, reload it from a normal terminal:
+If setup says the background service is not running, reload it from a normal terminal:
 
 ```bash
 relaymux restart-launch-agent
 relaymux status-launch-agent
 ```
 
-A healthy install should show both the main LaunchAgent and `Watchdog ... loaded`. The checked-in watchdog script is copied to `~/.relaymux/bin/<launch-agent-label>-watchdog.sh`, and its plist lives at `~/Library/LaunchAgents/<launch-agent-label>.watchdog.plist`. Watchdog activity is logged under `~/.relaymux/logs/launch-agent-watchdog.log`.
+A healthy macOS install should show both the main LaunchAgent and `Watchdog ... loaded`. The checked-in watchdog script is copied to `~/.relaymux/bin/<launch-agent-label>-watchdog.sh`, and its plist lives at `~/Library/LaunchAgents/<launch-agent-label>.watchdog.plist`. Watchdog activity is logged under `~/.relaymux/logs/launch-agent-watchdog.log`.
+
+A healthy Linux install should show `systemd user service ... active`. If it does not, inspect it with:
+
+```bash
+systemctl --user status com.relaymux.daemon.service
+journalctl --user -u com.relaymux.daemon.service -e
+```
+
+If `systemctl --user` reports that it cannot connect to the bus, use a normal systemd user login session, check `XDG_RUNTIME_DIR`, or enable lingering for the account on a headless machine. As a temporary fallback, run `relaymux daemon` in a foreground shell.
 
 If iMessage/SMS send or receive fails, verify your `imsg` CLI first:
 
@@ -76,10 +87,15 @@ chmod 600 ~/.relaymux/secrets/telegram-bot-token
 relaymux doctor
 ```
 
-If tmux is missing:
+If tmux is missing, install it with your OS package manager:
 
 ```bash
+# macOS
 brew install tmux
+
+# Debian/Ubuntu
+sudo apt-get install tmux
+
 relaymux doctor
 ```
 

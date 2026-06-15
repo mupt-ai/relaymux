@@ -26,6 +26,25 @@ export function launchAgentWatchdogLabel(config) {
   return `${launchAgentLabel(config)}.watchdog`;
 }
 
+export function backgroundServicePath(config, { platform = process.platform, env = process.env }: any = {}) {
+  return platform === "linux" ? systemdUserUnitPath(config, env) : launchAgentPath(config);
+}
+
+export function systemdServiceName(config) {
+  const configured = config.daemon?.systemdServiceName || config.daemon?.systemdUnitName || launchAgentLabel(config);
+  const raw = String(configured || "relaymux-daemon").trim();
+  const withoutSuffix = raw.endsWith(".service") ? raw.slice(0, -".service".length) : raw;
+  const safe = withoutSuffix
+    .replace(/[^A-Za-z0-9:_.@-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "relaymux-daemon";
+  return `${safe}.service`;
+}
+
+export function systemdUserUnitPath(config, env = process.env) {
+  const configHome = env.XDG_CONFIG_HOME ? expandPath(env.XDG_CONFIG_HOME) : path.join(os.homedir(), ".config");
+  return path.join(configHome, "systemd", "user", systemdServiceName(config));
+}
+
 export function renderLaunchAgentPlist({
   label,
   programArguments,
@@ -67,9 +86,45 @@ ${args}
 `;
 }
 
-export function installLaunchAgent({ flags, configInfo, binPath, io }) {
+export function renderSystemdUserServiceUnit({
+  serviceName,
+  programArguments,
+  workingDirectory,
+  standardOutPath,
+  standardErrorPath,
+  environment = {},
+  restartSec = 5,
+}) {
+  const env = renderSystemdEnvironment(environment);
+  return `[Unit]
+Description=relaymux background daemon
+Documentation=https://github.com/avyayv/relaymux
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=${systemdUnitValue(workingDirectory)}
+ExecStart=${programArguments.map(systemdUnitValue).join(" ")}
+Restart=always
+RestartSec=${Math.max(1, Math.floor(Number(restartSec) || 5))}
+${env}StandardOutput=${systemdUnitValue(`append:${standardOutPath}`)}
+StandardError=${systemdUnitValue(`append:${standardErrorPath}`)}
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+export function installLaunchAgent({ flags, configInfo, binPath, io, platform = process.platform }) {
   if (!configInfo.exists) {
     throw new Error(`Config does not exist at ${configInfo.path}. Run relaymux init first.`);
+  }
+
+  if (platform === "linux") {
+    return installSystemdUserService({ flags, configInfo, binPath, io, env: io.env || process.env });
+  }
+  if (platform !== "darwin") {
+    throw new Error(`Background service installation is not supported on ${platform}. Run \`relaymux daemon\` manually or use an external service manager.`);
   }
 
   const config = configInfo.config;
@@ -111,6 +166,7 @@ export function installLaunchAgent({ flags, configInfo, binPath, io }) {
       binPath,
       io,
       load: flags.load !== false,
+      platform,
     });
   }
 
@@ -151,8 +207,66 @@ export function installLaunchAgent({ flags, configInfo, binPath, io }) {
   return plistPath;
 }
 
-export function installLaunchAgentWatchdog({ config, configPath, binPath, io, load = true }) {
-  if (process.platform !== "darwin") {
+function installSystemdUserService({ flags, configInfo, binPath, io, env = process.env }) {
+  const config = configInfo.config;
+  const serviceName = systemdServiceName(config);
+  const unitPath = systemdUserUnitPath(config, env);
+  const logDir = resolveLogDir(config, env);
+  const workingDirectory = expandPath(config.orchestrator?.cwd || "~");
+  const launchMode = resolveLaunchMode(flags, config);
+  if ((config.daemon?.launchMode === "tmux" || config.daemon?.launchMode === "supervised-tmux") && !flags.mode && !flags.launchMode) {
+    io.stderr.write("relaymux: daemon.launchMode=tmux is deprecated; installing direct/background systemd user service instead.\n");
+  }
+  const programArguments = buildDirectDaemonArgs({ binPath, configPath: configInfo.path });
+  const logPrefix = "daemon";
+  const stdoutLog = path.join(logDir, `${logPrefix}.out.log`);
+  const stderrLog = path.join(logDir, `${logPrefix}.err.log`);
+  const unit = renderSystemdUserServiceUnit({
+    serviceName,
+    programArguments,
+    workingDirectory,
+    environment: launchAgentEnvironment(config, configInfo.path),
+    standardOutPath: stdoutLog,
+    standardErrorPath: stderrLog,
+    restartSec: config.daemon?.systemdRestartSec || config.daemon?.restartSec || 5,
+  });
+
+  if (flags.dryRun) {
+    io.stdout.write(unit);
+    return unitPath;
+  }
+
+  ensureDirectory(path.dirname(unitPath));
+  ensureDirectory(logDir);
+  fs.writeFileSync(unitPath, unit, { mode: 0o644 });
+  io.stdout.write(`Wrote ${unitPath}\n`);
+  io.stdout.write(`Background service ${serviceName} mode: ${launchMode}/background systemd user service (no tmux)\n`);
+
+  if (flags.watchdog !== false) {
+    io.stdout.write("Linux uses systemd Restart=always for daemon recovery; no separate watchdog unit is installed.\n");
+  }
+
+  if (flags.load !== false) {
+    const result = loadSystemdUserService({ serviceName });
+    if (result.status !== 0) {
+      io.stderr.write(formatSystemdServiceLoadFailure({
+        serviceName,
+        result,
+        unitPath,
+        logDir,
+        stdoutLog,
+        stderrLog,
+      }));
+    } else {
+      io.stdout.write(`Enabled and started systemd user service ${serviceName}\n`);
+    }
+  }
+
+  return unitPath;
+}
+
+export function installLaunchAgentWatchdog({ config, configPath, binPath, io, load = true, platform = process.platform }) {
+  if (platform !== "darwin") {
     return null;
   }
 
@@ -214,8 +328,18 @@ export function renderLaunchAgentWatchdogPlist({ config, configPath, scriptPath 
   });
 }
 
-export function stopLaunchAgent({ config, io }) {
-  if (process.platform !== "darwin") {
+export function stopLaunchAgent({ config, io, platform = process.platform }) {
+  if (platform === "linux") {
+    const serviceName = systemdServiceName(config);
+    const result = runCommand("systemctl", ["--user", "stop", serviceName], { allowFailure: true });
+    if (result.status === 0) {
+      io.stdout.write(`Stopped systemd user service ${serviceName}\n`);
+      return true;
+    }
+    return false;
+  }
+
+  if (platform !== "darwin") {
     return false;
   }
 
@@ -228,28 +352,33 @@ export function stopLaunchAgent({ config, io }) {
   return false;
 }
 
-export function restartLaunchAgent({ flags, configInfo, binPath, io }) {
+export function restartLaunchAgent({ flags, configInfo, binPath, io, platform = process.platform }) {
   const plistPath = installLaunchAgent({
     flags: { ...flags, load: true },
     configInfo,
     binPath,
     io,
+    platform,
   });
-  printLaunchAgentStatus({ config: configInfo.config, io });
+  printLaunchAgentStatus({ config: configInfo.config, io, platform });
   return plistPath;
 }
 
-export function printLaunchAgentStatus({ config, io, json = false }) {
-  const status: any = getLaunchAgentStatus(config);
-  const watchdog: any = getLaunchAgentWatchdogStatus(config);
+export function printLaunchAgentStatus({ config, io, json = false, platform = process.platform }) {
+  const status: any = getLaunchAgentStatus(config, { platform, env: io.env || process.env });
+  const watchdog: any = getLaunchAgentWatchdogStatus(config, { platform, env: io.env || process.env });
   if (json) {
     const payload = { ...status, watchdog };
     io.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     return payload;
   }
 
+  if (status.serviceManager === "systemd") {
+    return printSystemdServiceStatus({ status, config, io });
+  }
+
   if (!status.supported) {
-    io.stdout.write(`LaunchAgent ${status.label}: direct/background (no tmux) unsupported on ${process.platform}; plist ${status.plistPath}\n`);
+    io.stdout.write(`Background service ${status.label}: direct/background (no tmux) unsupported on ${platform}; path ${status.plistPath}\n`);
     return status;
   }
 
@@ -274,20 +403,87 @@ export function printLaunchAgentStatus({ config, io, json = false }) {
   return status;
 }
 
-export function getLaunchAgentStatus(config) {
+function printSystemdServiceStatus({ status, config, io }) {
+  const logDir = resolveLogDir(config, io.env || process.env);
+  if (!status.supported) {
+    io.stdout.write(`Background service ${status.serviceName}: systemd user services unavailable; unit ${status.unitPath}\n`);
+    if (status.detail) io.stdout.write(`Detail: ${status.detail}\n`);
+    io.stdout.write(`Logs: ${path.join(logDir, "daemon.out.log")} and ${path.join(logDir, "daemon.err.log")}\n`);
+    io.stdout.write(`Inspect: systemctl --user status ${status.serviceName}\n`);
+    io.stdout.write(`Journal: journalctl --user -u ${status.serviceName} -e\n`);
+    io.stdout.write("Fallback: run `relaymux daemon` in a foreground shell, or enable systemd user services and run `relaymux restart-launch-agent`.\n");
+    return status;
+  }
+
+  if (!status.loaded) {
+    io.stdout.write(`Background service ${status.serviceName}: systemd user service not active; unit ${status.unitExists ? status.unitPath : "missing"}\n`);
+    if (status.detail) io.stdout.write(`Detail: ${status.detail}\n`);
+    io.stdout.write(`Logs: ${path.join(logDir, "daemon.out.log")} and ${path.join(logDir, "daemon.err.log")}\n`);
+    io.stdout.write(`Inspect: systemctl --user status ${status.serviceName}\n`);
+    io.stdout.write(`Journal: journalctl --user -u ${status.serviceName} -e\n`);
+    io.stdout.write("Next: relaymux restart-launch-agent (writes and restarts the Linux systemd user service)\n");
+    return status;
+  }
+
+  const pidText = status.pid ? ` pid=${status.pid}` : "";
+  const exitText = status.lastExitCode ? ` lastExit=${status.lastExitCode}` : "";
+  const stateText = [status.activeState, status.subState].filter(Boolean).join("/") || status.state || "unknown";
+  io.stdout.write(`Background service ${status.serviceName}: systemd user service active state=${stateText}${pidText}${exitText}; unit ${status.unitPath}\n`);
+  io.stdout.write("Restart policy: systemd Restart=always (no separate watchdog unit on Linux)\n");
+  return status;
+}
+
+export function getLaunchAgentStatus(config, { platform = process.platform, env = process.env }: any = {}) {
+  if (platform === "linux") {
+    return getSystemdUserServiceStatus(config, env);
+  }
+  if (platform !== "darwin") {
+    return unsupportedBackgroundServiceStatus(config, platform, env);
+  }
   return getLaunchAgentStatusFor({
     label: launchAgentLabel(config),
     plistPath: launchAgentPath(config),
     target: launchAgentTarget(config),
+    platform,
   });
 }
 
-export function getLaunchAgentWatchdogStatus(config) {
+export function getLaunchAgentWatchdogStatus(config, { platform = process.platform }: any = {}) {
+  if (platform === "linux") {
+    return {
+      label: "systemd Restart=always",
+      enabled: false,
+      supported: true,
+      loaded: false,
+      running: false,
+      state: "managed-by-systemd",
+      serviceManager: "systemd",
+      detail: "Linux systemd user service units use Restart=always; no separate watchdog unit is installed.",
+      intervalSeconds: 0,
+      plistPath: "",
+      scriptPath: "",
+    };
+  }
+  if (platform !== "darwin") {
+    return {
+      label: launchAgentWatchdogLabel(config),
+      enabled: false,
+      supported: false,
+      loaded: false,
+      running: false,
+      state: "unsupported",
+      serviceManager: "unsupported",
+      intervalSeconds: 0,
+      plistPath: launchAgentWatchdogPath(config),
+      scriptPath: launchAgentWatchdogScriptPath(config),
+    };
+  }
   return {
     ...getLaunchAgentStatusFor({
       label: launchAgentWatchdogLabel(config),
       plistPath: launchAgentWatchdogPath(config),
       target: launchAgentWatchdogTarget(config),
+      platform,
     }),
     enabled: shouldInstallWatchdog(config, {}),
     intervalSeconds: launchAgentWatchdogIntervalSeconds(config),
@@ -309,9 +505,111 @@ export function formatLaunchAgentLoadFailure({ label, result, domain, target, pl
   ].join("\n");
 }
 
-function getLaunchAgentStatusFor({ label, plistPath, target }) {
+export function formatSystemdServiceLoadFailure({ serviceName, result, unitPath, logDir, stdoutLog, stderrLog }) {
+  const detail = systemdFailureDetail(result);
+  return [
+    `relaymux: systemctl --user failed for ${serviceName} (status ${result.status}: ${detail})`,
+    `  unit: ${unitPath}`,
+    `  logs: ${stdoutLog || path.join(logDir, "daemon.out.log")} and ${stderrLog || path.join(logDir, "daemon.err.log")}`,
+    `  inspect: systemctl --user status ${serviceName}`,
+    `  journal: journalctl --user -u ${serviceName} -e`,
+    "  common causes: systemd user services unavailable, missing executable path, bad WorkingDirectory, or file permission problems",
+    "  next: run relaymux status-launch-agent; after fixing the issue, run relaymux restart-launch-agent",
+    "  fallback: run relaymux daemon in a foreground shell when systemd --user is unavailable",
+    "",
+  ].join("\n");
+}
+
+function getSystemdUserServiceStatus(config, env = process.env) {
+  const serviceName = systemdServiceName(config);
+  const unitPath = systemdUserUnitPath(config, env);
+  const unitExists = fs.existsSync(unitPath);
+  const base = {
+    label: launchAgentLabel(config),
+    serviceName,
+    unitPath,
+    plistPath: unitPath,
+    unitExists,
+    plistExists: unitExists,
+    target: serviceName,
+    supported: true,
+    serviceManager: "systemd",
+    mode: "direct",
+    background: true,
+  };
+
+  const result = runCommand("systemctl", ["--user", "show", serviceName, "--no-page"], { allowFailure: true });
+  if (result.status !== 0) {
+    const unavailable = isSystemdUserUnavailable(result);
+    return {
+      ...base,
+      supported: !unavailable,
+      loaded: false,
+      running: false,
+      state: unavailable ? "unavailable" : "not-active",
+      detail: systemdFailureDetail(result),
+    };
+  }
+
+  const parsed = parseSystemctlShow(result.stdout);
+  const active = parsed.activeState === "active";
+  const detail = parsed.loadState === "not-found"
+    ? "unit not found by systemd; run relaymux restart-launch-agent"
+    : parsed.result && parsed.result !== "success"
+      ? `last result: ${parsed.result}`
+      : "";
+  return {
+    ...base,
+    loaded: active,
+    running: active,
+    state: parsed.activeState || parsed.loadState || "unknown",
+    detail,
+    ...parsed,
+  };
+}
+
+export function parseSystemctlShow(output) {
+  const properties: Record<string, string> = {};
+  for (const line of String(output || "").split(/\r?\n/)) {
+    const index = line.indexOf("=");
+    if (index <= 0) continue;
+    properties[line.slice(0, index)] = line.slice(index + 1);
+  }
+  const pid = Number(properties.MainPID || 0);
+  const execStatus = properties.ExecMainStatus || "";
+  return {
+    loadState: properties.LoadState || "",
+    activeState: properties.ActiveState || "",
+    subState: properties.SubState || "",
+    unitFileState: properties.UnitFileState || "",
+    fragmentPath: properties.FragmentPath || "",
+    result: properties.Result || "",
+    pid: Number.isFinite(pid) && pid > 0 ? pid : null,
+    lastExitCode: execStatus && execStatus !== "0" ? execStatus : "",
+  };
+}
+
+function unsupportedBackgroundServiceStatus(config, platform, env = process.env) {
+  const servicePath = backgroundServicePath(config, { platform, env });
+  return {
+    label: launchAgentLabel(config),
+    plistPath: servicePath,
+    plistExists: fs.existsSync(servicePath),
+    target: "",
+    supported: false,
+    serviceManager: "unsupported",
+    mode: "direct",
+    background: true,
+    loaded: false,
+    running: false,
+    state: "unsupported",
+    detail: `No relaymux background service manager is implemented for ${platform}. Run relaymux daemon manually or use an external service manager.`,
+  };
+}
+
+function getLaunchAgentStatusFor({ label, plistPath, target, platform = process.platform }) {
   const plistExists = fs.existsSync(plistPath);
-  const base = { label, plistPath, plistExists, target, supported: process.platform === "darwin", mode: "direct", background: true };
+  const base = { label, plistPath, plistExists, target, supported: platform === "darwin", serviceManager: "launchd", mode: "direct", background: true };
   if (!base.supported) {
     return { ...base, loaded: false, running: false, state: "unsupported" };
   }
@@ -336,7 +634,16 @@ function getLaunchAgentStatusFor({ label, plistPath, target }) {
   };
 }
 
-export function uninstallLaunchAgent({ config, io }) {
+export function uninstallLaunchAgent({ config, io, platform = process.platform }) {
+  if (platform === "linux") {
+    return uninstallSystemdUserService({ config, io, env: io.env || process.env });
+  }
+  if (platform !== "darwin") {
+    const servicePath = backgroundServicePath(config, { platform, env: io.env || process.env });
+    io.stdout.write(`No supported relaymux background service manager on ${platform}; nothing installed by relaymux at ${servicePath}\n`);
+    return servicePath;
+  }
+
   const watchdogPlistPath = launchAgentWatchdogPath(config);
   if (fs.existsSync(watchdogPlistPath)) {
     runCommand("launchctl", ["bootout", launchAgentWatchdogTarget(config)], { allowFailure: true });
@@ -359,6 +666,28 @@ export function uninstallLaunchAgent({ config, io }) {
     io.stdout.write(`No LaunchAgent found at ${plistPath}\n`);
   }
   return plistPath;
+}
+
+function uninstallSystemdUserService({ config, io, env = process.env }) {
+  const serviceName = systemdServiceName(config);
+  const unitPath = systemdUserUnitPath(config, env);
+  const stop = runCommand("systemctl", ["--user", "disable", "--now", serviceName], { allowFailure: true });
+  if (stop.status !== 0 && !isSystemdUserUnavailable(stop)) {
+    io.stderr.write(`relaymux: systemctl --user disable --now ${serviceName} failed: ${systemdFailureDetail(stop)}\n`);
+  }
+
+  if (fs.existsSync(unitPath)) {
+    fs.unlinkSync(unitPath);
+    io.stdout.write(`Removed ${unitPath}\n`);
+  } else {
+    io.stdout.write(`No systemd user unit found at ${unitPath}\n`);
+  }
+
+  const reload = runCommand("systemctl", ["--user", "daemon-reload"], { allowFailure: true });
+  if (reload.status !== 0 && !isSystemdUserUnavailable(reload)) {
+    io.stderr.write(`relaymux: systemctl --user daemon-reload failed: ${systemdFailureDetail(reload)}\n`);
+  }
+  return unitPath;
 }
 
 export function isCurrentLaunchAgent(config, env = process.env) {
@@ -501,8 +830,18 @@ function loadLaunchAgentTarget({ target, domain, plistPath }) {
   return result;
 }
 
+function loadSystemdUserService({ serviceName }) {
+  const reload = runCommand("systemctl", ["--user", "daemon-reload"], { allowFailure: true });
+  if (reload.status !== 0) return reload;
+
+  const enable = runCommand("systemctl", ["--user", "enable", serviceName], { allowFailure: true });
+  if (enable.status !== 0) return enable;
+
+  return runCommand("systemctl", ["--user", "restart", serviceName], { allowFailure: true });
+}
+
 export function stableNodePath() {
-  for (const candidate of ["/opt/homebrew/bin/node", "/usr/local/bin/node", process.execPath]) {
+  for (const candidate of ["/opt/homebrew/bin/node", "/usr/local/bin/node", process.execPath, "/usr/bin/node"]) {
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
       return candidate;
@@ -529,7 +868,7 @@ function resolveLaunchMode(flags, config) {
   const rawMode = String(explicitMode || config.daemon?.launchMode || "direct");
   const mode = rawMode === "background" ? "direct" : rawMode;
   if (explicitMode && !["direct", "background"].includes(String(explicitMode))) {
-    throw new Error("LaunchAgent tmux mode has been removed. The relaymux background service must run direct; use start-tmux only for legacy manual debugging.");
+    throw new Error("Background service tmux mode has been removed. The relaymux daemon must run directly outside tmux; use start-tmux only for legacy manual debugging.");
   }
   if (["direct", "tmux", "supervised-tmux"].includes(mode)) {
     return "direct";
@@ -612,6 +951,15 @@ function renderEnvironment(environment) {
   return `\n  <key>EnvironmentVariables</key>\n  <dict>\n${body}\n  </dict>`;
 }
 
+function renderSystemdEnvironment(environment) {
+  const entries = Object.entries(environment || {})
+    .filter(([key, value]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(String(key)) && value !== undefined && value !== null);
+  if (!entries.length) return "";
+  return entries
+    .map(([key, value]) => `Environment=${systemdUnitValue(`${key}=${value}`)}`)
+    .join("\n") + "\n";
+}
+
 export function parseLaunchCtlPrint(output) {
   const pidMatch = /^\s*pid = (\d+)\s*$/m.exec(output);
   const stateMatch = /^\s*state = (.+?)\s*$/m.exec(output);
@@ -621,6 +969,37 @@ export function parseLaunchCtlPrint(output) {
     state: stateMatch ? stateMatch[1] : (pidMatch ? "running" : "loaded"),
     lastExitCode: lastExitMatch ? lastExitMatch[1] : "",
   };
+}
+
+function systemdUnitValue(value) {
+  const text = String(value ?? "")
+    .replaceAll("%", "%%")
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\n", "\\n");
+  if (/^[A-Za-z0-9_@%+=:,./\\-]+$/.test(text)) {
+    return text;
+  }
+  return `"${text.replaceAll('"', '\\"')}"`;
+}
+
+function systemdFailureDetail(result) {
+  if (result?.error?.code === "ENOENT") {
+    return "systemctl not found on PATH; install/use systemd user services or run relaymux daemon manually";
+  }
+  const raw = firstLine(result?.stderr) || firstLine(result?.stdout) || result?.error?.message || `exit ${result?.status ?? 1}`;
+  if (isSystemdUserUnavailable(result)) {
+    return `${raw}; systemd --user is unavailable in this session. Use a normal systemd user login, ensure XDG_RUNTIME_DIR is set, consider 'loginctl enable-linger $USER' on headless servers, or run relaymux daemon manually.`;
+  }
+  return raw;
+}
+
+function isSystemdUserUnavailable(result) {
+  const text = `${result?.stderr || ""}\n${result?.stdout || ""}\n${result?.error?.message || ""}`.toLowerCase();
+  return result?.error?.code === "ENOENT"
+    || text.includes("failed to connect to bus")
+    || text.includes("no medium found")
+    || text.includes("no such file or directory") && text.includes("bus")
+    || text.includes("system has not been booted with systemd");
 }
 
 function firstLine(value) {
