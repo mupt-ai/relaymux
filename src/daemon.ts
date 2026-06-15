@@ -4,7 +4,7 @@ import path from "node:path";
 import { createCompletionWebhookServer } from "./webhook.js";
 import { buildIncomingOrchestratorPrompt, buildTerminalOrchestratorPrompt, buildWebhookOrchestratorPrompt, runOrchestrator } from "./orchestrator.js";
 import { formatIncomingForPrompt, isImessageReceiveEnabled, isIncomingUserMessage, receiveMessages, sendMessage } from "./message-io.js";
-import { sendTelegramMessage } from "./telegram.js";
+import { isTelegramReceiveEnabled, receiveTelegramMessages, sendTelegramMessage } from "./telegram.js";
 import { ensureDirectory } from "./paths.js";
 import { validateSessionName } from "./tmux.js";
 
@@ -49,12 +49,12 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     });
   }
 
-  function enqueueIncoming(messages) {
+  function enqueueIncoming(adapter, messages, replyMode) {
     if (!messages.length) return;
     const ids = messages.map((message) => String(message.id));
     for (const id of ids) queuedIncomingIds.add(id);
-    queue.push({ type: "imessage", requestId: `imsg-${Date.now().toString(36)}`, messages, ids, enqueuedAt: new Date().toISOString() });
-    log(`queued incoming message(s): ${ids.join(",")}`);
+    queue.push({ type: "incoming", adapter, replyMode, requestId: `${adapter}-${Date.now().toString(36)}`, messages, ids, enqueuedAt: new Date().toISOString() });
+    log(`queued incoming ${adapter} message(s): ${ids.join(",")}`);
     scheduleProcessQueue();
   }
 
@@ -76,7 +76,7 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
   }
 
   async function processIncomingJob(job) {
-    log(`processing incoming message(s): ${job.ids.join(",")}`);
+    log(`processing incoming ${job.adapter || "message"} message(s): ${job.ids.join(",")}`);
     let marked = false;
     const markSeen = () => {
       if (marked) return;
@@ -89,16 +89,16 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
       const prompt = buildIncomingOrchestratorPrompt({
         config,
         configPath: configInfo.path,
-        incomingText: formatIncomingForPrompt(job.messages),
+        incomingText: formatIncomingForPrompt(job.messages, job.adapter),
       });
       const reply = await runOrchestrator(config, { prompt, stateDir, configPath: configInfo.path, requestId: job.requestId });
-      await sendMessage(config, reply, io);
+      await sendReply(config, job.replyMode || "imessage", reply, io);
       markSeen();
-      log(`replied to ${job.ids.join(",")}`);
+      log(`replied to ${job.ids.join(",")} via ${job.replyMode || "imessage"}`);
     } catch (error) {
       warn(`failed processing incoming ${job.ids.join(",")}:`, describeError(error));
       try {
-        await sendMessage(config, `relaymux orchestrator hit an error: ${error.message || String(error)}`, io);
+        await sendReply(config, job.replyMode || "imessage", `relaymux orchestrator hit an error: ${error.message || String(error)}`, io);
       } catch (sendError) {
         warn("also failed to send error message:", describeError(sendError));
       }
@@ -163,7 +163,7 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     try {
       while (queue.length > 0) {
         const job = queue.shift();
-        if (job.type === "imessage") await processIncomingJob(job);
+        if (job.type === "incoming" || job.type === "imessage") await processIncomingJob(job);
         else if (job.type === "webhook") await processWebhookJob(job);
         else if (job.type === "request") await processTerminalRequestJob(job);
         else warn("dropping unknown job:", JSON.stringify(job));
@@ -176,23 +176,47 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
 
   async function pollOnce() {
     if (processing || queue.length > 0) return;
-    const recent = await receiveMessages(config);
     const seen = new Set((state.seenIncomingIds || []).map(String));
-    const fresh = recent
-      .filter(isIncomingUserMessage)
-      .filter((message) => !seen.has(String(message.id)) && !queuedIncomingIds.has(String(message.id)))
-      .sort(compareMessages);
-    if (fresh.length) enqueueIncoming(fresh);
+    if (inboundImessageEnabled) {
+      try {
+        const recent = await receiveMessages(config);
+        const fresh = freshIncoming(recent, seen, queuedIncomingIds);
+        if (fresh.length) enqueueIncoming("imessage", fresh, "imessage");
+      } catch (error) {
+        warn("iMessage poll failed:", describeError(error));
+      }
+    }
+    if (inboundTelegramEnabled) {
+      try {
+        const recent = await receiveTelegramMessages(config, state, io.env || process.env);
+        saveState();
+        const fresh = freshIncoming(recent, seen, queuedIncomingIds);
+        if (fresh.length) enqueueIncoming("telegram", fresh, "telegram");
+      } catch (error) {
+        warn("Telegram poll failed:", describeError(error));
+      }
+    }
   }
 
   const inboundImessageEnabled = isImessageReceiveEnabled(config);
+  const inboundTelegramEnabled = isTelegramReceiveEnabled(config);
+  const inboundEnabled = inboundImessageEnabled || inboundTelegramEnabled;
   log("starting relaymux background daemon");
   if (inboundImessageEnabled) log("iMessage/SMS adapter enabled for inbound polling");
-  else log("no inbound message adapter enabled; serving local API/webhook only");
+  if (inboundTelegramEnabled) log("Telegram adapter enabled for inbound polling");
+  if (!inboundEnabled) log("no inbound message adapter enabled; serving local API/webhook only");
 
-  if (inboundImessageEnabled && !state.initialized) {
+  if (inboundEnabled && !state.initialized) {
     try {
-      const recent = await receiveMessages(config);
+      const recent: any[] = [];
+      if (inboundImessageEnabled) {
+        try { recent.push(...await receiveMessages(config)); }
+        catch (error) { warn("iMessage initial sync failed:", describeError(error)); }
+      }
+      if (inboundTelegramEnabled) {
+        try { recent.push(...await receiveTelegramMessages(config, state, io.env || process.env)); }
+        catch (error) { warn("Telegram initial sync failed:", describeError(error)); }
+      }
       const initialIds = recent.filter(isIncomingUserMessage).map((message) => String(message.id));
       state.initialized = true;
       rememberSeen(state, initialIds);
@@ -217,7 +241,7 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
       });
   if (webhookServer) log(`local completion webhook listening on ${config.daemon?.host || "127.0.0.1"}:${Number(config.daemon?.port || 47761)}`);
 
-  if (inboundImessageEnabled) {
+  if (inboundEnabled) {
     await pollOnce().catch((error) => warn("initial poll failed:", describeError(error)));
   }
   await drainIfOnce(flags, processQueue);
@@ -228,10 +252,14 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     return 0;
   }
 
-  const interval = inboundImessageEnabled
+  const pollMs = Math.min(
+    inboundImessageEnabled ? Number(config.integrations?.imessage?.pollMs || config.imessage?.pollMs || 3000) : Infinity,
+    inboundTelegramEnabled ? Number(config.integrations?.telegram?.receive?.pollMs || 3000) : Infinity,
+  );
+  const interval = inboundEnabled
     ? setInterval(() => {
         pollOnce().catch((error) => warn("poll failed:", describeError(error)));
-      }, Number(config.integrations?.imessage?.pollMs || config.imessage?.pollMs || 3000))
+      }, Number.isFinite(pollMs) ? pollMs : 3000)
     : null;
 
   await new Promise<void>((resolve) => {
@@ -254,6 +282,7 @@ export function readDaemonState(stateFile) {
       initialized: Boolean(parsed.initialized),
       seenIncomingIds: Array.isArray(parsed.seenIncomingIds) ? parsed.seenIncomingIds.map(String) : [],
       seenWebhookIdempotencyKeys: Array.isArray(parsed.seenWebhookIdempotencyKeys) ? parsed.seenWebhookIdempotencyKeys.map(String) : [],
+      lastTelegramUpdateId: parsed.lastTelegramUpdateId,
       lastProcessedAt: parsed.lastProcessedAt,
       lastWebhookAt: parsed.lastWebhookAt,
     };
@@ -274,6 +303,13 @@ function rememberSeen(state, ids) {
   for (const id of ids) seen.add(String(id));
   state.seenIncomingIds = Array.from(seen).slice(-1000);
   state.lastProcessedAt = new Date().toISOString();
+}
+
+function freshIncoming(messages, seen, queuedIncomingIds) {
+  return messages
+    .filter(isIncomingUserMessage)
+    .filter((message) => !seen.has(String(message.id)) && !queuedIncomingIds.has(String(message.id)))
+    .sort(compareMessages);
 }
 
 function compareMessages(a, b) {

@@ -43,6 +43,12 @@ export function defaultTelegramIntegration() {
     apiBaseUrl: "https://api.telegram.org",
     timeoutMs: 30000,
     maxMessageChars: 3900,
+    receive: {
+      enabled: false,
+      pollMs: 3000,
+      syncLimit: 20,
+      timeoutMs: 30000,
+    },
   };
 }
 
