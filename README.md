@@ -1,8 +1,10 @@
 # relaymux
 
-`relaymux` lets you talk to local coding agents from Telegram. It runs the agent on your machine in `tmux`, keeps the background service running, and replies through your Telegram bot.
+`relaymux` is a lightweight local metaharness for coding agents. Telegram is the remote control; `tmux` is where the actual agent work happens.
 
-iMessage/SMS support exists, but it is beta.
+The background service listens for Telegram messages, but it does not hide agent runs in a black box. When relaymux launches an agent, it opens a visible `tmux` window on your machine so you can attach, watch, interrupt, or debug the run like any normal terminal session.
+
+Telegram is the main supported interface. iMessage/SMS support exists, but it is beta.
 
 ## Requirements
 
@@ -41,7 +43,7 @@ Send your Telegram bot a message like:
 Open an agent in ~/code/my-app and inspect the failing tests.
 ```
 
-relaymux passes the message to your configured local orchestrator and replies in Telegram.
+relaymux passes the message to your configured local orchestrator. If the orchestrator launches an agent, that agent runs in `tmux`; the final reply comes back through Telegram.
 
 Manual notification test:
 
@@ -49,7 +51,19 @@ Manual notification test:
 relaymux notify --from test --reply-mode telegram --message "hello from relaymux"
 ```
 
-## Optional: launch an agent manually
+## tmux is the workspace
+
+relaymux uses one shared `tmux` session named `agents` by default. Each launched agent gets its own tmux window. This is the core idea: Telegram starts and receives updates from work, but tmux keeps that work visible and recoverable locally.
+
+Attach any time:
+
+```bash
+tmux attach -t agents
+```
+
+Detach with `Ctrl-b d`. Closing Telegram does not stop the tmux run.
+
+## Launch an agent manually
 
 ```bash
 relaymux launch \
@@ -59,13 +73,11 @@ relaymux launch \
   --prompt "Inspect the failing tests and summarize what is broken."
 ```
 
-Attach to the tmux session:
+Then attach with:
 
 ```bash
 tmux attach -t agents
 ```
-
-Detach with `Ctrl-b d`.
 
 ## iMessage/SMS beta
 
