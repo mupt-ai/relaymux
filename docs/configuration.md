@@ -8,7 +8,7 @@ relaymux stores private config, run records, prompts, logs, and local API token 
 ~/.relaymux/
   config.json     # private config, written mode 0600
   state/          # run records, prompts, scripts, schedules, daemon state, local API token
-  logs/           # LaunchAgent stdout/stderr logs
+  logs/           # background service stdout/stderr logs
   tasks/          # optional task scratch space
   reports/        # optional reports
   research/       # optional research notes
@@ -51,6 +51,8 @@ Command arrays are argv templates. `{prompt}` and `{promptFile}` are substituted
   }
 }
 ```
+
+`daemon.launchAgentLabel` names the macOS LaunchAgent. On Linux the same value is reused as the systemd user service name with a `.service` suffix unless you set `daemon.systemdServiceName`.
 
 ## Agents And Orchestrator
 

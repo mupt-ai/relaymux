@@ -8,7 +8,7 @@ import { main } from "../src/cli.js";
 import { defaultConfig, writeConfig } from "../src/config.js";
 import { buildScheduledPromptPlan, normalizeScheduleName, parseCronExpression } from "../src/schedule.js";
 
-function makeIo(env: Record<string, string> = {}) {
+function makeIo(env: Record<string, string> = {}, platform = process.platform) {
   let stdout = "";
   let stderr = "";
   const baseEnv = { ...process.env };
@@ -16,6 +16,7 @@ function makeIo(env: Record<string, string> = {}) {
   return {
     io: {
       env: { ...baseEnv, ...env },
+      platform,
       stdin: { isTTY: false },
       stdout: { isTTY: false, write: (chunk) => { stdout += String(chunk); } },
       stderr: { write: (chunk) => { stderr += String(chunk); } },
@@ -72,7 +73,7 @@ test("parseCronExpression allows cron day matching when launchd output is not ne
   assert.deepEqual(parsed.launchd, []);
 });
 
-test("normalizeScheduleName keeps LaunchAgent labels predictable", () => {
+test("normalizeScheduleName keeps schedule identifiers predictable", () => {
   assert.equal(normalizeScheduleName("daily-check"), "daily-check");
   assert.throws(() => normalizeScheduleName("daily check"), /letters, numbers/);
 });
@@ -193,8 +194,7 @@ test("schedule add dry-run prints the planned launchd job without writing state"
 
 test("schedule add dry-run can print a cron job without writing state", async () => {
   const { configPath, env, root } = writeScheduleTestConfig();
-  const harness = makeIo(env);
-  const code = await main([
+  const harness = makeIo(env);  const code = await main([
     "--config",
     configPath,
     "schedule",
@@ -215,6 +215,30 @@ test("schedule add dry-run can print a cron job without writing state", async ()
   assert.match(harness.stdout, /# crontab entry/);
   assert.match(harness.stdout, /# relaymux schedule:daily-check/);
   assert.doesNotMatch(harness.stdout, /secret prompt text/);
+  assert.equal(fs.existsSync(path.join(root, "state", "schedules", "daily-check")), false);
+});
+
+test("schedule add dry-run auto-selects cron with Linux platform wording", async () => {
+  const { configPath, env, root } = writeScheduleTestConfig();
+  const harness = makeIo(env, "linux");
+  const code = await main([
+    "--config",
+    configPath,
+    "schedule",
+    "add",
+    "--name",
+    "daily-check",
+    "--prompt",
+    "secret prompt text",
+    "--cron",
+    "0 9 * * *",
+    "--dry-run",
+  ], harness.io);
+
+  assert.equal(code, 0);
+  assert.match(harness.stdout, /# scheduler: cron/);
+  assert.match(harness.stdout, /# crontab entry/);
+  assert.doesNotMatch(harness.stdout, /LaunchAgent/);
   assert.equal(fs.existsSync(path.join(root, "state", "schedules", "daily-check")), false);
 });
 

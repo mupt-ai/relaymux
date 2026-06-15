@@ -18,11 +18,11 @@ relaymux setup
 relaymux status
 ```
 
-The installer clones and builds relaymux locally with Node/npm/git, writes app files under `~/.local/lib/relaymux`, and writes a `relaymux` shim under `~/.local/bin`.
+The installer clones and builds relaymux locally with Node/npm/git, writes app files under `~/.local/lib/relaymux`, and writes a `relaymux` shim under `~/.local/bin`. On Linux, `relaymux setup` expects per-user systemd services (`systemctl --user`) for the daemon; scheduled prompts use cron when `--scheduler auto` is selected.
 
-`relaymux setup` creates or updates `~/.relaymux/config.json`, installs/restarts the macOS LaunchAgent when supported, and prints the config path, log path, status, and next command. If launchd rejects the service, setup prints the plist path, daemon logs, `launchctl print ...` command, common causes, and the exact retry command.
+`relaymux setup` creates or updates `~/.relaymux/config.json`, installs/restarts the per-user background service when supported, and prints the config path, log path, status, and next command. macOS uses launchd LaunchAgents; Linux uses a systemd user unit (`systemctl --user`). If the service manager rejects the service, setup prints the service file path, daemon logs, inspect command, common causes, and the exact retry command.
 
-For a config-only setup without starting the background service, use `relaymux setup --no-launch-agent`. `relaymux init` is the lower-level config writer; it refuses to overwrite an existing config unless you pass `--force`.
+For a config-only setup without starting the background service, use `relaymux setup --no-launch-agent` (command names remain launch-agent-compatible for now). `relaymux init` is the lower-level config writer; it refuses to overwrite an existing config unless you pass `--force`.
 
 The generated config includes a harmless `custom` agent that prints its prompt, which is useful for checking that tmux/status behavior works before wiring a real agent:
 
@@ -140,7 +140,7 @@ relaymux schedule add \
   --prompt "Check the active agent runs and send me a concise status."
 ```
 
-Scheduled prompts are local OS jobs. The default `auto` scheduler uses macOS launchd on macOS and cron elsewhere. Each job runs `relaymux ask --no-wait` when the schedule fires; relaymux does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. Use `relaymux schedule add --dry-run` to inspect the generated job before installing it, or pass `--scheduler launchd|cron` when you want a specific backend.
+Scheduled prompts are local OS jobs. The default `auto` scheduler uses macOS launchd on macOS and cron elsewhere, including Linux. Each job runs `relaymux ask --no-wait` when the schedule fires; relaymux does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. Use `relaymux schedule add --dry-run` to inspect the generated job before installing it, or pass `--scheduler launchd|cron` when you want a specific backend. On Linux, install a cron implementation such as cron/cronie if `crontab` is missing.
 
 ## Docs
 

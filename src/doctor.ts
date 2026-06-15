@@ -5,7 +5,7 @@ import path from "node:path";
 import { defaultConfigPath, getIntegration, isIntegrationEnabled, legacyDefaultConfigPath, resolveLogDir, resolveStateDir } from "./config.js";
 import { validateConfiguredAgentCommand } from "./command-validation.js";
 import { runCommand } from "./process.js";
-import { getLaunchAgentStatus, getLaunchAgentWatchdogStatus, launchAgentPath, launchAgentWatchdogPath } from "./launch-agent.js";
+import { backgroundServicePath, getLaunchAgentStatus, getLaunchAgentWatchdogStatus, launchAgentPath, launchAgentWatchdogPath } from "./launch-agent.js";
 import { defaultRelaymuxHome } from "./paths.js";
 import { webhookStatus } from "./webhook.js";
 
@@ -38,7 +38,8 @@ export function findExecutable(command, env = process.env) {
   return null;
 }
 
-export function collectDoctorChecks(config, configInfo, env = process.env) {
+export function collectDoctorChecks(config, configInfo, env = process.env, options: any = {}) {
+  const platform = options.platform || process.platform;
   const checks = [];
   const tmuxPath = findExecutable("tmux", env);
   let tmuxVersion = "";
@@ -113,32 +114,36 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
     ok: !webhook.tokenFileExists || webhook.tokenFileMode === "0600",
     detail: webhook.tokenFileExists ? `${webhook.tokenFile} mode ${webhook.tokenFileMode}` : `will be created at ${webhook.tokenFile}`,
   });
-  const launchAgent: any = getLaunchAgentStatus(config);
+  const launchAgent: any = getLaunchAgentStatus(config, { platform, env });
   const daemonEnabled = config.daemon?.enabled !== false;
   const logDir = resolveLogDir(config, env);
+  const backgroundOk = !daemonEnabled || launchAgent.loaded || launchAgent.serviceManager === "unsupported";
   checks.push({
     name: "background-service",
-    ok: !daemonEnabled || !launchAgent.supported || launchAgent.loaded,
+    ok: backgroundOk,
     fatal: false,
-    severity: launchAgent.loaded || !daemonEnabled ? undefined : "warning",
+    severity: backgroundOk ? undefined : "warning",
     detail: daemonEnabled
-      ? launchAgent.supported
-        ? launchAgent.loaded
-          ? `direct/background LaunchAgent loaded: ${launchAgentPath(config)}${launchAgent.detail ? ` (${launchAgent.detail})` : ""}`
-          : `direct/background LaunchAgent not loaded: ${launchAgentPath(config)}${launchAgent.detail ? ` (launchctl: ${launchAgent.detail})` : ""}; run relaymux restart-launch-agent; logs ${logDir}/daemon.out.log and ${logDir}/daemon.err.log; inspect launchctl print ${launchAgent.target}`
-        : `direct/background LaunchAgent unsupported on ${process.platform}: ${launchAgentPath(config)}`
+      ? formatBackgroundServiceDoctorDetail({ config, status: launchAgent, logDir, platform, env })
       : "disabled in config",
   });
 
-  const watchdog: any = getLaunchAgentWatchdogStatus(config);
-  if (daemonEnabled && watchdog.enabled) {
+  const watchdog: any = getLaunchAgentWatchdogStatus(config, { platform, env });
+  if (daemonEnabled && platform === "darwin" && watchdog.enabled) {
     checks.push({
       name: "background-watchdog",
       ok: !watchdog.supported || watchdog.loaded,
       fatal: false,
       detail: watchdog.supported
         ? `watchdog LaunchAgent ${watchdog.loaded ? "loaded" : "not loaded"}: ${launchAgentWatchdogPath(config)}; interval ${watchdog.intervalSeconds}s`
-        : `watchdog LaunchAgent unsupported on ${process.platform}: ${launchAgentWatchdogPath(config)}`,
+        : `watchdog LaunchAgent unsupported on ${platform}: ${launchAgentWatchdogPath(config)}`,
+    });
+  } else if (daemonEnabled && platform === "linux") {
+    checks.push({
+      name: "background-restart-policy",
+      ok: true,
+      fatal: false,
+      detail: "Linux systemd user service uses Restart=always; no separate watchdog unit is installed.",
     });
   }
 
@@ -173,6 +178,28 @@ export function collectDoctorChecks(config, configInfo, env = process.env) {
   }
 
   return checks;
+}
+
+function formatBackgroundServiceDoctorDetail({ config, status, logDir, platform, env }) {
+  if (status.serviceManager === "systemd") {
+    if (!status.supported) {
+      return `systemd user services unavailable for ${status.serviceName}: ${status.detail}; unit ${status.unitPath}; run relaymux daemon manually or enable systemd --user, then run relaymux restart-launch-agent`;
+    }
+    if (status.loaded) {
+      return `systemd user service active: ${status.unitPath}${status.detail ? ` (${status.detail})` : ""}`;
+    }
+    return `systemd user service not active: ${status.unitPath}${status.detail ? ` (${status.detail})` : ""}; run relaymux restart-launch-agent; logs ${logDir}/daemon.out.log and ${logDir}/daemon.err.log; inspect systemctl --user status ${status.serviceName}; journalctl --user -u ${status.serviceName} -e`;
+  }
+
+  if (status.serviceManager === "launchd" || platform === "darwin") {
+    return status.supported
+      ? status.loaded
+        ? `direct/background LaunchAgent loaded: ${launchAgentPath(config)}${status.detail ? ` (${status.detail})` : ""}`
+        : `direct/background LaunchAgent not loaded: ${launchAgentPath(config)}${status.detail ? ` (launchctl: ${status.detail})` : ""}; run relaymux restart-launch-agent; logs ${logDir}/daemon.out.log and ${logDir}/daemon.err.log; inspect launchctl print ${status.target}`
+      : `direct/background LaunchAgent unsupported on ${platform}: ${launchAgentPath(config)}`;
+  }
+
+  return `background service unsupported on ${platform}: ${backgroundServicePath(config, { platform, env })}; run relaymux daemon manually or use an external service manager`;
 }
 
 function commandCheck(name, command, env) {

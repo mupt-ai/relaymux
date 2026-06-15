@@ -7,7 +7,7 @@ import test from "node:test";
 import { main } from "../src/cli.js";
 import { defaultConfig, loadConfig, writeConfig, writeDefaultConfig } from "../src/config.js";
 
-function makeIo(env: Record<string, string> = {}) {
+function makeIo(env: Record<string, string> = {}, platform = process.platform) {
   let stdout = "";
   let stderr = "";
   const baseEnv = { ...process.env };
@@ -15,6 +15,7 @@ function makeIo(env: Record<string, string> = {}) {
   return {
     io: {
       env: { ...baseEnv, ...env },
+      platform,
       stdin: { isTTY: false },
       stdout: { isTTY: false, write: (chunk) => { stdout += String(chunk); } },
       stderr: { write: (chunk) => { stderr += String(chunk); } },
@@ -189,7 +190,7 @@ test("launch dry-run includes opt-in exit notification wrapper", async () => {
 });
 
 test("install-launch-agent dry-run runs the daemon directly by default", async () => {
-  const harness = makeIo();
+  const harness = makeIo({}, "darwin");
   const code = await main([
     "--config",
     writeTempConfig("launch-agent-direct"),
@@ -207,8 +208,54 @@ test("install-launch-agent dry-run runs the daemon directly by default", async (
   assert.doesNotMatch(harness.stdout, /supervise-tmux/);
 });
 
+test("install-launch-agent dry-run emits a Linux systemd user service", async () => {
+  const harness = makeIo({ XDG_CONFIG_HOME: path.join(os.tmpdir(), "relaymux-xdg-cli") }, "linux");
+  const code = await main([
+    "--config",
+    writeTempConfig("launch-agent-systemd"),
+    "install-launch-agent",
+    "--dry-run",
+    "--no-load",
+  ], harness.io);
+
+  assert.equal(code, 0);
+  assert.match(harness.stdout, /\[Unit\]/);
+  assert.match(harness.stdout, /ExecStart=.*daemon/);
+  assert.match(harness.stdout, /Restart=always/);
+  assert.doesNotMatch(harness.stdout, /<plist/);
+  assert.doesNotMatch(harness.stdout, /launchctl/);
+});
+
+test("status-launch-agent uses Linux systemd status when platform is Linux", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-status-linux-"));
+  const binDir = path.join(dir, "bin");
+  fs.mkdirSync(binDir);
+  makeExecutable(binDir, "systemctl", `
+if [ "$1" = "--user" ] && [ "$2" = "show" ]; then
+  printf '%s\n' 'LoadState=loaded' 'ActiveState=active' 'SubState=running' 'MainPID=2468' 'ExecMainStatus=0' 'Result=success'
+  exit 0
+fi
+exit 0
+`);
+  const configPath = writeTempConfig("status-systemd");
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+  try {
+    const harness = makeIo({ PATH: process.env.PATH, XDG_CONFIG_HOME: path.join(dir, "xdg") }, "linux");
+    const code = await main(["--config", configPath, "status-launch-agent"], harness.io);
+
+    assert.equal(code, 0);
+    assert.match(harness.stdout, /systemd user service active/);
+    assert.match(harness.stdout, /pid=2468/);
+    assert.doesNotMatch(harness.stdout, /LaunchAgent/);
+    assert.doesNotMatch(harness.stdout, /launchctl/);
+  } finally {
+    process.env.PATH = oldPath;
+  }
+});
+
 test("install-launch-agent rejects tmux supervisor mode", async () => {
-  const harness = makeIo();
+  const harness = makeIo({}, "darwin");
   const code = await main([
     "--config",
     writeTempConfig("launch-agent-tmux"),
@@ -283,7 +330,7 @@ test("setup --imsg guidance uses separate recovery commands", async () => {
   assert.doesNotMatch(harness.stdout, /doctor && relaymux restart-launch-agent && relaymux status/);
 });
 
-test("setup dry-run does not write config or mutate LaunchAgents", async () => {
+test("setup dry-run does not write config or mutate background services", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-setup-dry-run-"));
   const configPath = path.join(dir, "config.json");
   const harness = makeIo();
@@ -295,7 +342,20 @@ test("setup dry-run does not write config or mutate LaunchAgents", async () => {
   assert.equal(fs.existsSync(configPath), false);
 });
 
-test("doctor exits zero when only the background service is missing or unsupported", async () => {
+test("setup dry-run uses Linux systemd wording", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-setup-linux-dry-run-"));
+  const configPath = path.join(dir, "config.json");
+  const harness = makeIo({}, "linux");
+  const code = await main(["--config", configPath, "setup", "--dry-run"], harness.io);
+
+  assert.equal(code, 0);
+  assert.match(harness.stdout, /Linux systemd user service/);
+  assert.doesNotMatch(harness.stdout, /LaunchAgent/);
+  assert.doesNotMatch(harness.stdout, /launchctl/);
+  assert.equal(fs.existsSync(configPath), false);
+});
+
+test("doctor exits zero when only the macOS LaunchAgent is missing", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-doctor-background-"));
   const binDir = path.join(dir, "bin");
   fs.mkdirSync(binDir);
@@ -309,16 +369,39 @@ test("doctor exits zero when only the background service is missing or unsupport
   const oldPath = process.env.PATH;
   process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
   try {
-    const harness = makeIo({ PATH: process.env.PATH });
+    const harness = makeIo({ PATH: process.env.PATH }, "darwin");
     const code = await main(["--config", configPath, "doctor"], harness.io);
 
     assert.equal(code, 0);
-    if (process.platform === "darwin") {
-      assert.match(harness.stdout, /warning\tbackground-service\t/);
-      assert.match(harness.stdout, /relaymux restart-launch-agent/);
-    } else {
-      assert.match(harness.stdout, /ok\tbackground-service\t.*unsupported/);
-    }
+    assert.match(harness.stdout, /warning\tbackground-service\t/);
+    assert.match(harness.stdout, /relaymux restart-launch-agent/);
+    assert.match(harness.stdout, /launchctl print/);
+  } finally {
+    process.env.PATH = oldPath;
+  }
+});
+
+test("doctor uses Linux systemd wording without launchd instructions", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-doctor-linux-"));
+  const binDir = path.join(dir, "bin");
+  fs.mkdirSync(binDir);
+  makeExecutable(binDir, "tmux", "printf 'tmux 3.4\\n'");
+  const configPath = path.join(dir, "config.json");
+  const config = defaultConfig({ RELAYMUX_HOME: path.join(dir, "home") });
+  config.orchestrator.command = [process.execPath, "--version"];
+  config.daemon.launchAgentLabel = `com.relaymux.test.${process.pid}.linux`;
+  writeConfig(configPath, config, { force: true });
+
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+  try {
+    const harness = makeIo({ PATH: process.env.PATH, XDG_CONFIG_HOME: path.join(dir, "xdg") }, "linux");
+    const code = await main(["--config", configPath, "doctor"], harness.io);
+
+    assert.equal(code, 0);
+    assert.match(harness.stdout, /background-service\t.*systemd user service/);
+    assert.match(harness.stdout, /relaymux restart-launch-agent/);
+    assert.doesNotMatch(harness.stdout, /launchctl/);
   } finally {
     process.env.PATH = oldPath;
   }

@@ -23,7 +23,7 @@ Ask the orchestrator from a terminal:
 relaymux ask "Open an agent in ~/code/my-app to inspect the failing test."
 ```
 
-`relaymux ask` requires the relaymux daemon to be running. `relaymux setup` installs the daemon as a per-user LaunchAgent on macOS, and `relaymux restart-launch-agent` reloads it after config changes.
+`relaymux ask` requires the relaymux daemon to be running. `relaymux setup` installs the daemon as a per-user LaunchAgent on macOS or a systemd user service on Linux, and `relaymux restart-launch-agent` reloads it after config changes (the command name is kept for CLI compatibility).
 
 Send a local run-log completion from a delegated agent. Local runs still record automatic `started` and `completed` events even without the daemon:
 
@@ -57,7 +57,7 @@ relaymux schedule add \
   --prompt "Check the active agent runs and send me a concise status."
 ```
 
-Scheduled prompts are local OS jobs. The default `auto` scheduler uses macOS launchd on macOS and cron elsewhere. Each job runs `relaymux ask --no-wait` on the schedule; relaymux does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. The relaymux daemon must be running when the schedule fires, so run `relaymux restart-launch-agent` after setup if needed. Use `--dry-run` to inspect the generated job before installing it, or pass `--scheduler launchd|cron` when you want a specific backend.
+Scheduled prompts are local OS jobs. The default `auto` scheduler uses macOS launchd on macOS and cron elsewhere, including Linux. Each job runs `relaymux ask --no-wait` on the schedule; relaymux does not create a hidden cloud scheduler or a durable in-process loop inside the daemon. The relaymux daemon must be running when the schedule fires, so run `relaymux restart-launch-agent` after setup if needed. On Linux, make sure `crontab` is available through cron/cronie. Use `--dry-run` to inspect the generated job before installing it, or pass `--scheduler launchd|cron` when you want a specific backend.
 
 Use `--prompt-file prompt.txt` for longer prompts. relaymux copies the prompt into `~/.relaymux/state/schedules/<name>/prompt.txt`, stores schedule metadata beside it, and writes schedule logs under `~/.relaymux/logs/schedules`. Re-adding the same `--name` updates that schedule instead of creating a duplicate.
 
@@ -70,7 +70,7 @@ relaymux schedule remove --name weekday-checkin
 
 ## Direct HTTP
 
-For foreground debugging instead of LaunchAgent, run `relaymux daemon`. If you cannot use the CLI helper, you can call the local API directly:
+For foreground debugging instead of the installed background service, run `relaymux daemon`. If you cannot use the CLI helper, you can call the local API directly:
 
 ```bash
 TOKEN="$(cat ~/.relaymux/state/webhook-token)"
@@ -92,7 +92,7 @@ relaymux status-launch-agent
 relaymux status
 ```
 
-`relaymux setup --imsg` creates or updates `~/.relaymux/config.json`, tries to discover recent `imsg` chats when `--chat-id` is omitted, installs/restarts the LaunchAgent unless `--no-launch-agent` is passed, and prints next steps. Re-running `relaymux init --imsg` or `relaymux setup --imsg` adds or updates the adapter on the existing config; `--force` is only for replacing the whole config.
+`relaymux setup --imsg` creates or updates `~/.relaymux/config.json`, tries to discover recent `imsg` chats when `--chat-id` is omitted, installs/restarts the background service unless `--no-launch-agent` is passed, and prints next steps. Re-running `relaymux init --imsg` or `relaymux setup --imsg` adds or updates the adapter on the existing config; `--force` is only for replacing the whole config.
 
 After setup, text the configured chat with a small request. Use a chat where your request appears as an incoming message to the Mac's Messages account; messages marked by Messages as sent by that Mac are ignored so relaymux does not respond to its own replies.
 
@@ -110,7 +110,7 @@ relaymux notify \
 
 The Telegram adapter is optional outbound notification support through `sendMessage`. It does not poll Telegram for inbound messages.
 
-Create a bot with BotFather, get a chat id for the chat you want to notify, and store the token outside the public config. A token file works well with LaunchAgent because it does not depend on your interactive shell environment:
+Create a bot with BotFather, get a chat id for the chat you want to notify, and store the token outside the public config. A token file works well with the background service because it does not depend on your interactive shell environment:
 
 ```bash
 mkdir -p ~/.relaymux/secrets
