@@ -5,6 +5,7 @@ import { defaultConfig, defaultImessageIntegration } from "./config.js";
 import { findExecutable } from "./doctor.js";
 import { expandPath } from "./paths.js";
 import { runCommand } from "./process.js";
+import { buildSetupAgents, buildSetupOrchestrator } from "./setup-agents.js";
 
 export function buildImsgConfig(options: any = {}, env = process.env) {
   const base = defaultConfig(env);
@@ -12,9 +13,6 @@ export function buildImsgConfig(options: any = {}, env = process.env) {
   const sessionDir = path.posix.join(stateDir, "sessions");
   const logDir = options.logDir || (options.stateDir ? path.posix.join(stateDir, "logs") : base.daemon.logDir);
   const imsg = options.imsgPath || findExecutable("imsg", env) || "imsg";
-  const pi = options.piPath || findExecutable("pi", env) || "pi";
-  const codex = options.codexPath || findExecutable("codex", env) || "codex";
-  const claude = options.claudePath || findExecutable("claude", env) || "claude";
   const chatId = options.chatId || options.recipient || "CHAT_ID_OR_PHONE";
   const cwd = options.cwd || "~";
 
@@ -64,27 +62,9 @@ export function buildImsgConfig(options: any = {}, env = process.env) {
     },
     orchestrator: {
       ...base.orchestrator,
-      cwd,
-      command: [pi, "--print", "--continue", "--session-dir", sessionDir, "{prompt}"],
-      promptMode: "arg",
+      ...buildSetupOrchestrator({ ...options, cwd, sessionDir }, env),
     },
-    agents: {
-      pi: {
-        description: "Default Pi subagent launched in tmux.",
-        command: [pi, "{prompt}"],
-        promptMode: "arg",
-      },
-      codex: {
-        description: "Codex subagent. Edit flags to match your local install.",
-        command: [codex, "{prompt}"],
-        promptMode: "arg",
-      },
-      claude: {
-        description: "Claude subagent.",
-        command: [claude, "{prompt}"],
-        promptMode: "arg",
-      },
-    },
+    agents: buildSetupAgents(options, env),
   };
 }
 

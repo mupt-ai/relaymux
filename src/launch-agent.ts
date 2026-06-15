@@ -117,7 +117,7 @@ WantedBy=default.target
 
 export function installLaunchAgent({ flags, configInfo, binPath, io, platform = process.platform }) {
   if (!configInfo.exists) {
-    throw new Error(`Config does not exist at ${configInfo.path}. Run relaymux init first.`);
+    throw new Error(`Config does not exist at ${configInfo.path}. Run relaymux setup first.`);
   }
 
   if (platform === "linux") {

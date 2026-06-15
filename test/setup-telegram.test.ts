@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { discoverTelegramChatId, resolveTelegramTokenFile } from "../src/setup-telegram.js";
+import { buildTelegramConfig, discoverTelegramChatId, resolveTelegramTokenFile } from "../src/setup-telegram.js";
 
 test("resolveTelegramTokenFile stores a passed bot token privately", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-telegram-token-"));
@@ -40,6 +40,14 @@ test("discoverTelegramChatId reads the first human chat from getUpdates", async 
   } finally {
     await close(server);
   }
+});
+
+test("buildTelegramConfig uses a placeholder orchestrator when no agent CLI is installed", () => {
+  const config = buildTelegramConfig({ telegramChatId: "123", telegramBotTokenFile: "/tmp/token" }, { PATH: "" });
+
+  assert.equal(config.orchestrator.command[0], "/bin/sh");
+  assert.ok(config.orchestrator.description.includes("Placeholder orchestrator"));
+  assert.ok(config.agents.custom);
 });
 
 function listen(server) {
