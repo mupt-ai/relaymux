@@ -24,12 +24,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/avyayv/relaymux.git"
+    "url": "git+https://github.com/mupt-ai/relaymux.git"
   },
   "bugs": {
-    "url": "https://github.com/avyayv/relaymux/issues"
+    "url": "https://github.com/mupt-ai/relaymux/issues"
   },
-  "homepage": "https://github.com/avyayv/relaymux#readme",
+  "homepage": "https://github.com/mupt-ai/relaymux#readme",
   "devDependencies": {
     "@types/node": "^25.9.2",
     "tsx": "^4.22.4",

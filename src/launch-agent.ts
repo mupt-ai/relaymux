@@ -98,7 +98,7 @@ export function renderSystemdUserServiceUnit({
   const env = renderSystemdEnvironment(environment);
   return `[Unit]
 Description=relaymux background daemon
-Documentation=https://github.com/avyayv/relaymux
+Documentation=https://github.com/mupt-ai/relaymux
 After=network.target
 
 [Service]

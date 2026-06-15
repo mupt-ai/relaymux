@@ -6,16 +6,15 @@ iMessage/SMS support exists, but it is beta.
 
 ## Requirements
 
-You need Node.js 20+, npm, git, tmux, and a local agent CLI such as `pi`, `codex`, or `claude`.
+You need Node.js 20+, npm, `tmux`, and a local agent CLI such as `pi`, `codex`, or `claude`. The installer uses `curl` and `tar` by default; it only needs `git` as a fallback.
 
 ## Install
 
 ```bash
-git clone https://github.com/mupt-ai/relaymux.git
-cd relaymux
-./install.sh
-export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/mupt-ai/relaymux/main/install.sh | bash
 ```
+
+The installer downloads a source tarball, builds relaymux locally, and writes the CLI shim into a writable directory already on your `PATH` when possible. You do not need to clone the repo.
 
 ## Set up Telegram
 
