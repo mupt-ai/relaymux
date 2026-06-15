@@ -270,31 +270,31 @@ test("install-launch-agent rejects tmux supervisor mode", async () => {
   assert.match(harness.stderr, /tmux mode has been removed/);
 });
 
-test("init --imsg merges adapter into existing config without overwriting core settings", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-init-merge-"));
+test("setup --imsg --no-launch-agent merges adapter into existing config without overwriting core settings", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-setup-merge-"));
   const configPath = path.join(dir, "config.json");
   const config = defaultConfig();
   config.session = "kept-session";
-  config.orchestrator.command = ["custom-orchestrator", "{prompt}"];
+  config.orchestrator.command = ["/bin/sh", "-lc", "printf '%s\\n' \"$RELAYMUX_PROMPT\""];
   config.agents.local = { command: ["local-agent", "{prompt}"], promptMode: "arg" };
   writeConfig(configPath, config, { force: true });
 
   const harness = makeIo();
-  const code = await main(["--config", configPath, "init", "--imsg", "--chat-id", "chat-1"], harness.io);
+  const code = await main(["--config", configPath, "setup", "--imsg", "--chat-id", "chat-1", "--no-launch-agent"], harness.io);
   const updated = loadConfig({ configPath }).config;
 
   assert.equal(code, 0);
   assert.match(harness.stdout, /Updated .* with iMessage\/SMS adapter defaults/);
   assert.doesNotMatch(harness.stdout, /doctor &&/);
   assert.equal(updated.session, "kept-session");
-  assert.deepEqual(updated.orchestrator.command, ["custom-orchestrator", "{prompt}"]);
+  assert.deepEqual(updated.orchestrator.command, ["/bin/sh", "-lc", "printf '%s\\n' \"$RELAYMUX_PROMPT\""]);
   assert.deepEqual(updated.agents.local.command, ["local-agent", "{prompt}"]);
   assert.equal(updated.integrations.imessage.enabled, true);
   assert.equal(updated.integrations.imessage.chatId, "chat-1");
 });
 
-test("init --imsg is idempotent on an existing imsg config without prompting", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-init-imsg-idempotent-"));
+test("setup --imsg --no-launch-agent is idempotent on an existing imsg config without prompting", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-setup-imsg-idempotent-"));
   const configPath = path.join(dir, "config.json");
   const config = defaultConfig();
   config.integrations.imessage = {
@@ -304,7 +304,7 @@ test("init --imsg is idempotent on an existing imsg config without prompting", a
   writeConfig(configPath, config, { force: true });
 
   const harness = makeIo();
-  const code = await main(["--config", configPath, "init", "--imsg"], harness.io);
+  const code = await main(["--config", configPath, "setup", "--imsg", "--no-launch-agent"], harness.io);
   const updated = loadConfig({ configPath }).config;
 
   assert.equal(code, 0);
@@ -326,7 +326,7 @@ test("setup --imsg guidance uses separate recovery commands", async () => {
   assert.equal(code, 0);
   assert.match(harness.stdout, /Updated|Created/);
   assert.match(harness.stdout, /Next: relaymux restart-launch-agent/);
-  assert.match(harness.stdout, /Logs:/);
+  assert.match(harness.stdout, /Background service installation skipped/);
   assert.doesNotMatch(harness.stdout, /doctor && relaymux restart-launch-agent && relaymux status/);
 });
 

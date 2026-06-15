@@ -42,7 +42,8 @@ test("buildImsgConfig creates usable imsg defaults", () => {
   ]);
   assert.equal(config.daemon.tokenFile, "~/.state/relaymux-test/webhook-token");
   assert.equal(config.daemon.port, 49999);
-  assert.equal(config.agents.codex.command.includes("--reasoning-effort"), false);
+  assert.deepEqual(config.agents.pi.command, ["/usr/local/bin/pi", "{prompt}"]);
+  assert.ok(config.agents.custom);
 });
 
 test("formatChat shows id and label", () => {

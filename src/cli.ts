@@ -40,10 +40,6 @@ export async function main(argv, io = defaultIo()) {
       return 0;
     }
 
-    if (parsed.command === "init") {
-      return handleInit(parsed.flags, io, platform);
-    }
-
     if (parsed.command === "setup") {
       return handleSetup(parsed.flags, io, platform);
     }
@@ -140,7 +136,7 @@ async function handleSetup(flags, io, platform = process.platform) {
   }
 
   if (!configInfo.exists || flags.force || wantsAdapter) {
-    await handleInit({
+    await writeSetupConfig({
       ...flags,
       installLaunchAgent: false,
     }, io, platform);
@@ -152,15 +148,20 @@ async function handleSetup(flags, io, platform = process.platform) {
     }
   }
 
-  if (shouldInstallLaunchAgent) {
-    restartLaunchAgent({
-      flags: { load: flags.load, watchdog: flags.watchdog },
-      configInfo,
-      binPath: process.argv[1],
-      io,
-      platform,
-    });
+  if (!shouldInstallLaunchAgent) {
+    io.stdout.write("Background service installation skipped because --no-launch-agent was passed.\n");
+    io.stdout.write(`Config: ${configInfo.path}\n`);
+    io.stdout.write("Next: relaymux restart-launch-agent\n");
+    return 0;
   }
+
+  restartLaunchAgent({
+    flags: { load: flags.load, watchdog: flags.watchdog },
+    configInfo,
+    binPath: process.argv[1],
+    io,
+    platform,
+  });
 
   const status = handleDoctor(configInfo, io, platform);
   const launchAgent = getLaunchAgentStatus(configInfo.config, { platform, env: io.env });
@@ -169,7 +170,10 @@ async function handleSetup(flags, io, platform = process.platform) {
     return 1;
   }
   if (status === 0) {
-    io.stdout.write("Setup complete. relaymux is ready.\n");
+    const placeholderOrchestrator = configInfo.config.orchestrator?.placeholder === true;
+    io.stdout.write(placeholderOrchestrator
+      ? "Setup complete. The background service is running, but no real orchestrator CLI is configured yet.\n"
+      : "Setup complete. relaymux is ready.\n");
     io.stdout.write(`Config: ${configInfo.path}\n`);
     io.stdout.write(`Logs: ${resolveLogDir(configInfo.config, io.env)}\n`);
     io.stdout.write("Next steps:\n");
@@ -188,15 +192,20 @@ async function handleSetup(flags, io, platform = process.platform) {
     } else {
       io.stdout.write("  1. Use the local CLI/API path: `relaymux ask <text>` or `relaymux notify --reply-mode none ...`.\n");
     }
-    io.stdout.write("  2. Run `relaymux status` to inspect the daemon and any tmux agent tabs.\n");
-    io.stdout.write("  3. Use `relaymux launch --repo <path> --agent pi --prompt <task>` for a manual first agent.\n");
+    if (placeholderOrchestrator) {
+      io.stdout.write("  2. Install pi or edit ~/.relaymux/config.json so orchestrator.command points at your agent CLI.\n");
+      io.stdout.write("  3. Run `relaymux restart-launch-agent` after changing the orchestrator.\n");
+    } else {
+      io.stdout.write("  2. Run `relaymux status` to inspect the daemon and any tmux agent tabs.\n");
+      io.stdout.write("  3. Use `relaymux launch --repo <path> --agent pi --prompt <task>` for a manual first agent.\n");
+    }
   } else {
     io.stderr.write("Setup completed, but doctor found missing requirements. Fix the missing checks above and re-run `relaymux doctor`.\n");
   }
   return status;
 }
 
-async function handleInit(flags, io, platform = process.platform) {
+async function writeSetupConfig(flags, io, platform = process.platform) {
   const wantsImsg = Boolean(flags.imsg || flags.preset === "imsg");
   const wantsTelegram = Boolean(flags.telegram || flags.preset === "telegram");
   const wantsAdapter = wantsImsg || wantsTelegram;
@@ -257,7 +266,7 @@ async function handleInit(flags, io, platform = process.platform) {
     io.stdout.write("Next: relaymux restart-launch-agent (starts the background service)\n");
     io.stdout.write("Then: relaymux status-launch-agent && relaymux status\n");
   } else {
-    io.stdout.write("Tip: add optional adapters later with `relaymux init --imsg` or `relaymux init --telegram`.\n");
+    io.stdout.write("Tip: add optional adapters later with `relaymux setup --imsg --no-launch-agent` or `relaymux setup --telegram --no-launch-agent`.\n");
   }
   if (flags.installLaunchAgent) {
     installLaunchAgent({
@@ -1057,9 +1066,6 @@ Usage:
   relaymux setup --telegram --telegram-bot-token <token>
   relaymux setup --imsg
   relaymux setup [--imsg|--telegram] [--chat-id <id>] [--telegram-chat-id <id>] [--no-launch-agent] [--dry-run]
-  relaymux init [--force] [--config <path>]
-  relaymux init --imsg [--chat-id <id>] [--install-launch-agent]
-  relaymux init --telegram [--telegram-chat-id <id>] [--install-launch-agent]
   relaymux install-launch-agent [--dry-run] [--no-load] [--no-watchdog]
   relaymux restart-launch-agent [--dry-run] [--no-load] [--no-watchdog]
   relaymux status-launch-agent [--json]
@@ -1073,7 +1079,7 @@ Usage:
   relaymux migrate-home [--dry-run] [--apply] [--symlink]
   relaymux doctor
 
-Setup/init options:
+Setup options:
   --imsg                    Enable the optional iMessage/SMS adapter and prompt for a chat when possible
   --telegram                Enable the optional Telegram adapter; waits for /start when chat id is missing
   --chat-id <id>            Messages chat id/phone for imsg history/send; omit to pick from recent chats

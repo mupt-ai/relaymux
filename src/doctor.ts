@@ -87,6 +87,15 @@ export function collectDoctorChecks(config, configInfo, env = process.env, optio
   }
 
   checks.push(commandCheck("orchestrator", config.orchestrator?.command?.[0], env));
+  if (config.orchestrator?.placeholder === true) {
+    checks.push({
+      name: "orchestrator-configured",
+      ok: false,
+      fatal: false,
+      severity: "warning",
+      detail: "placeholder orchestrator is configured; install pi or edit ~/.relaymux/config.json to point orchestrator.command at your agent CLI",
+    });
+  }
 
   const imessage = getIntegration(config, "imessage");
   if (isIntegrationEnabled(config, "imessage")) {
