@@ -42,7 +42,10 @@ Command arrays are argv templates. `{prompt}` and `{promptFile}` are substituted
   "orchestrator": {
     "cwd": "~",
     "command": ["pi", "--print", "--continue", "--session-dir", "~/.relaymux/state/sessions", "{prompt}"],
-    "promptMode": "arg"
+    "promptMode": "arg",
+    "defaultSystemPrompt": true,
+    "systemPromptFile": "",
+    "extraSystemPrompt": ""
   },
   "agents": {
     "pi": { "command": ["pi", "{prompt}"], "promptMode": "arg" },
@@ -59,6 +62,22 @@ Command arrays are argv templates. `{prompt}` and `{promptFile}` are substituted
 An agent is a command template in `~/.relaymux/config.json`. If you configure `pi`, relaymux runs `pi ...`; if you configure `codex`, it runs `codex ...`; if you configure `custom`, it can be any shell command.
 
 The orchestrator is also a command, but it has a different job from an agent. The orchestrator handles inbound requests from `relaymux ask` or optional message adapters. Agents do delegated work launched with `relaymux launch`. The orchestrator receives incoming text plus relaymux instructions and prints a reply on stdout.
+
+relaymux owns the generic orchestrator operating instructions in the source repo. By default, every orchestrator request includes those repo-managed instructions: stay local-first, be concise, delegate longer coding or research work with `relaymux launch`, use the configured shared tmux session, prefer prompt files for longer delegated tasks, ask subagents to call `relaymux notify` with idempotency keys, keep quiet updates on `--reply-mode none`, use `relaymux schedule` for recurring prompts, inspect real tmux/repo/test state before claiming completion, and never put secrets in prompts, logs, PRs, or replies.
+
+Your config owns local details: adapter tokens and chat IDs, exact agent CLI commands, local working directories, session names, private preferences, and repo-specific overrides. `orchestrator.systemPromptFile` and `orchestrator.extraSystemPrompt` are additive escape hatches for those local preferences; they are not required for best-practice operation. Set `orchestrator.defaultSystemPrompt` to `false` only if you want to fully replace relaymux's repo-managed orchestration guidance.
+
+Example local override:
+
+```json
+{
+  "orchestrator": {
+    "defaultSystemPrompt": true,
+    "systemPromptFile": "~/.relaymux/orchestrator.local.md",
+    "extraSystemPrompt": "Use the custom agent first for documentation-only requests."
+  }
+}
+```
 
 ## Prompt Passing
 

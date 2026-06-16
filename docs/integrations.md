@@ -25,6 +25,8 @@ relaymux ask "Open an agent in ~/code/my-app to inspect the failing test."
 
 `relaymux ask` requires the relaymux daemon to be running. `relaymux setup` installs the daemon as a per-user LaunchAgent on macOS or a systemd user service on Linux, and `relaymux restart-launch-agent` reloads it after config changes (the command name is kept for CLI compatibility).
 
+Every local API, adapter, and scheduled request is wrapped with relaymux's repo-managed default orchestrator instructions unless `orchestrator.defaultSystemPrompt` is set to `false`. Local `systemPromptFile` and `extraSystemPrompt` values are appended after those defaults for private preferences or repo-specific guidance.
+
 Send a local run-log completion from a delegated agent. Local runs still record automatic `started` and `completed` events even without the daemon:
 
 ```bash

@@ -53,7 +53,7 @@ export function buildTerminalOrchestratorPrompt({ config, configPath, job }) {
 export function buildFullPrompt({ config, configPath, title, body }) {
   const daemon = config.daemon || {};
   const system = [
-    DEFAULT_ORCHESTRATOR_SYSTEM_PROMPT,
+    config.orchestrator?.defaultSystemPrompt === false ? "" : DEFAULT_ORCHESTRATOR_SYSTEM_PROMPT,
     readOptionalPromptFile(config.orchestrator?.systemPromptFile),
     config.orchestrator?.extraSystemPrompt,
   ].filter((part) => String(part || "").trim()).join("\n\n");
@@ -69,7 +69,11 @@ export function buildFullPrompt({ config, configPath, title, body }) {
     webhookUrl,
   });
 
-  return `${system}\n\n${runtime}\n\n# ${title}\n\n${body}`;
+  return [
+    system,
+    runtime,
+    `# ${title}\n\n${body}`,
+  ].filter((part) => String(part || "").trim()).join("\n\n");
 }
 
 export async function runOrchestrator(config, { prompt, stateDir, configPath, requestId }) {
