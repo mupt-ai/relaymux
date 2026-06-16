@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { parseArgv } from "./args.js";
+import { cloudHelpText, handleCloud } from "./cloud-cli.js";
 import { buildAgentInvocation, buildTmuxShellCommand, buildTmuxShellScript, quoteArgv, renderTemplate, shellExportBlock } from "./command.js";
 import { assertNoFatalCommandFindings } from "./command-validation.js";
 import { collectDoctorChecks } from "./doctor.js";
@@ -35,6 +36,10 @@ export async function main(argv, io = defaultIo()) {
       io.stdout.write(scheduleHelpText());
       return 0;
     }
+    if (parsed.flags.help && parsed.command === "cloud") {
+      io.stdout.write(cloudHelpText());
+      return 0;
+    }
     if (parsed.flags.help || parsed.command === "help") {
       io.stdout.write(helpText());
       return 0;
@@ -42,6 +47,9 @@ export async function main(argv, io = defaultIo()) {
 
     if (parsed.command === "setup") {
       return handleSetup(parsed.flags, io, platform);
+    }
+    if (parsed.command === "cloud") {
+      return handleCloud(parsed.flags, parsed.positionals, io);
     }
 
     const configInfo = loadConfig({ configPath: parsed.flags.config, env: io.env });
@@ -1074,6 +1082,7 @@ Usage:
   relaymux ask <text> [--no-wait] [--reply-mode imessage|telegram|none]
   relaymux schedule add --name <name> --prompt <text> --cron "0 9 * * *" [--reply-mode none|imessage|telegram] [--scheduler auto|launchd|cron]
   relaymux schedule list|remove [--name <name>]
+  relaymux cloud scaffold --flue --out <dir>
   relaymux status [--json] [--session <name>]
   relaymux notify [--run-id <id>] [--reply-mode imessage|telegram|none] [--message <text>]
   relaymux migrate-home [--dry-run] [--apply] [--symlink]
@@ -1140,6 +1149,11 @@ Schedule options:
   --prompt-file <path>       Read scheduled prompt text from a file
   --reply-mode <mode>        Scheduled ask reply mode: none, imessage, or telegram
   --no-load                  Write schedule files without installing/loading the OS job
+
+Cloud options:
+  --flue                    Generate a Flue cloud-agent scaffold
+  --out <dir>               Output directory for cloud scaffold
+  --force                   Overwrite generated scaffold files
 
 Useful commands:
   tmux attach -t <session>       attach to the shared or named agent session

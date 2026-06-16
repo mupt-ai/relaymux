@@ -19,11 +19,44 @@ test("writeDefaultConfig creates a loadable config", () => {
   assert.equal(config.launchNotifications.replyMode, "none");
   assert.equal(config.daemon.host, "127.0.0.1");
   assert.equal(config.daemon.launchMode, "direct");
+  assert.equal(config.cloudAgent.enabled, false);
+  assert.equal(config.cloudAgent.provider, "flue");
+  assert.equal(config.cloudAgent.sandbox.protocol, "relaymux-sandbox-hands-v1");
+  assert.equal(config.cloudAgent.sandbox.authTokenEnv, "RELAYMUX_SANDBOX_TOKEN");
   assert.equal(config.tmux.sessionMode, "shared");
   assert.ok(config.orchestrator.command);
   assert.ok(config.agents.codex);
   assert.equal(config.agents.codex.command.includes("--reasoning-effort"), false);
   assert.equal(config.launchNotifications.onExit, "never");
+});
+
+test("loadConfig merges optional cloud agent config without accepting literal secrets", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-cloud-config-"));
+  const configPath = path.join(dir, "config.json");
+  fs.writeFileSync(configPath, JSON.stringify({
+    cloudAgent: {
+      enabled: true,
+      telegram: {
+        botTokenEnv: "CUSTOM_TELEGRAM_TOKEN_ENV",
+        botToken: "literal-secret",
+      },
+      sandbox: {
+        baseUrlEnv: "CUSTOM_SANDBOX_URL_ENV",
+        authToken: "literal-secret",
+      },
+    },
+  }));
+
+  const { config } = loadConfig({ configPath });
+
+  assert.equal(config.cloudAgent.enabled, true);
+  assert.equal(config.cloudAgent.provider, "flue");
+  assert.equal(config.cloudAgent.telegram.botTokenEnv, "CUSTOM_TELEGRAM_TOKEN_ENV");
+  assert.equal(config.cloudAgent.telegram.webhookSecretEnv, "RELAYMUX_TELEGRAM_WEBHOOK_SECRET");
+  assert.equal(config.cloudAgent.telegram.botToken, undefined);
+  assert.equal(config.cloudAgent.sandbox.baseUrlEnv, "CUSTOM_SANDBOX_URL_ENV");
+  assert.equal(config.cloudAgent.sandbox.authTokenEnv, "RELAYMUX_SANDBOX_TOKEN");
+  assert.equal(config.cloudAgent.sandbox.authToken, undefined);
 });
 
 test("loadConfig treats legacy top-level imessage as enabled integration", () => {

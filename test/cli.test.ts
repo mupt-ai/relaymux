@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -82,6 +83,42 @@ test("supervise-tmux daemon mode is retired by default", async () => {
 
   assert.equal(code, 1);
   assert.match(harness.stderr, /outside tmux/);
+});
+
+test("cloud help documents the Flue scaffold without requiring config", async () => {
+  const harness = makeIo();
+  const code = await main(["cloud", "--help"], harness.io);
+
+  assert.equal(code, 0);
+  assert.match(harness.stdout, /relaymux cloud/);
+  assert.match(harness.stdout, /cloud scaffold --flue --out <dir>/);
+  assert.match(harness.stdout, /RELAYMUX_SANDBOX_TOKEN/);
+});
+
+test("cloud scaffold --flue writes a syntax-checkable bundle with env placeholders", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-cloud-scaffold-"));
+  const configPath = path.join(dir, "bad-config.json");
+  const outDir = path.join(dir, "bundle");
+  fs.writeFileSync(configPath, "{not-json");
+  const harness = makeIo();
+  const code = await main(["--config", configPath, "cloud", "scaffold", "--flue", "--out", outDir], harness.io);
+
+  assert.equal(code, 0);
+  assert.match(harness.stdout, /Created Flue cloud-agent scaffold/);
+
+  const flue = fs.readFileSync(path.join(outDir, "flue.yml"), "utf8");
+  assert.match(flue, /\$\{TELEGRAM_BOT_TOKEN\}/);
+  assert.match(flue, /\$\{RELAYMUX_SANDBOX_TOKEN\}/);
+  assert.match(flue, /command: npm start/);
+
+  const bundleReadme = fs.readFileSync(path.join(outDir, "README.md"), "utf8");
+  assert.match(bundleReadme, /relaymux-sandbox-hands-v1/);
+  assert.match(bundleReadme, /Do not put literal tokens/);
+
+  const check = spawnSync(process.execPath, ["--check", path.join(outDir, "src", "cloud-agent.mjs")], {
+    encoding: "utf8",
+  });
+  assert.equal(check.status, 0, check.stderr || check.stdout);
 });
 
 test("launch dry-run defaults to the shared configured session", async () => {

@@ -50,6 +50,16 @@ Manual notification test:
 relaymux notify --from test --reply-mode telegram --message "hello from relaymux"
 ```
 
+## Optional cloud-agent scaffold
+
+The default relaymux path is local-first. For advanced deployments where Telegram should live in a cloud process and the actual repo/CLI/tmux work should happen in a sandbox, relaymux can generate a starter Flue cloud-agent bundle:
+
+```bash
+relaymux cloud scaffold --flue --out ./relaymux-cloud-agent
+```
+
+See [docs/cloud-agent.md](docs/cloud-agent.md). This is a scaffold and protocol boundary, not a hosted production service.
+
 ## tmux is the workspace
 
 relaymux uses one shared `tmux` session named `agents` by default. Each launched agent gets its own tmux window. This is the core idea: Telegram starts and receives updates from work, but tmux keeps that work visible and recoverable locally.

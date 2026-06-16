@@ -2,7 +2,29 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { RELAYMUX_CLOUD_AGENT_ENV, RELAYMUX_SANDBOX_HANDS_PROTOCOL } from "./cloud-protocol.js";
 import { defaultRelaymuxHome, defaultRelaymuxHomeConfigValue, expandPath } from "./paths.js";
+
+export type CloudAgentConfig = {
+  enabled: boolean;
+  provider: "flue";
+  role: "chat";
+  telegram: {
+    botTokenEnv: string;
+    webhookSecretEnv: string;
+  };
+  sandbox: {
+    protocol: string;
+    baseUrlEnv: string;
+    authTokenEnv: string;
+    completionCallbackTokenEnv: string;
+  };
+  flue: {
+    scaffoldCommand: string;
+    bundlePort: number;
+    healthPath: string;
+  };
+};
 
 export function defaultImessageIntegration() {
   return {
@@ -52,6 +74,29 @@ export function defaultTelegramIntegration() {
   };
 }
 
+export function defaultCloudAgentConfig(): CloudAgentConfig {
+  return {
+    enabled: false,
+    provider: "flue",
+    role: "chat",
+    telegram: {
+      botTokenEnv: RELAYMUX_CLOUD_AGENT_ENV.telegramBotToken,
+      webhookSecretEnv: RELAYMUX_CLOUD_AGENT_ENV.telegramWebhookSecret,
+    },
+    sandbox: {
+      protocol: RELAYMUX_SANDBOX_HANDS_PROTOCOL,
+      baseUrlEnv: RELAYMUX_CLOUD_AGENT_ENV.sandboxBaseUrl,
+      authTokenEnv: RELAYMUX_CLOUD_AGENT_ENV.sandboxAuthToken,
+      completionCallbackTokenEnv: RELAYMUX_CLOUD_AGENT_ENV.cloudCallbackToken,
+    },
+    flue: {
+      scaffoldCommand: "relaymux cloud scaffold --flue --out ./relaymux-cloud-agent",
+      bundlePort: 8787,
+      healthPath: "/health",
+    },
+  };
+}
+
 export function defaultConfig(env = process.env) {
   const homeDir = defaultRelaymuxHomeConfigValue(env);
   const stateDir = path.posix.join(homeDir, "state");
@@ -74,6 +119,7 @@ export function defaultConfig(env = process.env) {
       tailLines: 80,
       tailBytes: 4000,
     },
+    cloudAgent: defaultCloudAgentConfig(),
     integrations: {},
     daemon: {
       enabled: true,
@@ -252,6 +298,7 @@ function normalizeConfig(config, override) {
   }
 
   config.integrations = config.integrations || {};
+  config.cloudAgent = normalizeCloudAgent(config.cloudAgent, override.cloudAgent);
 
   if (hasOwnPath(override, ["integrations", "imessage"])) {
     config.integrations.imessage = normalizeIntegration(defaultImessageIntegration(), override.integrations.imessage);
@@ -269,6 +316,43 @@ function normalizeConfig(config, override) {
   }
 
   return config;
+}
+
+function normalizeCloudAgent(current, override) {
+  const defaults = defaultCloudAgentConfig();
+  if (override === false) return { ...defaults, enabled: false };
+  const merged = mergeConfig(defaults, isPlainObject(current) ? current : {});
+  const raw = isPlainObject(override) ? mergeConfig(merged, override) : merged;
+  return {
+    enabled: raw.enabled === true,
+    provider: "flue",
+    role: "chat",
+    telegram: {
+      botTokenEnv: stringOrDefault(raw.telegram?.botTokenEnv, defaults.telegram.botTokenEnv),
+      webhookSecretEnv: stringOrDefault(raw.telegram?.webhookSecretEnv, defaults.telegram.webhookSecretEnv),
+    },
+    sandbox: {
+      protocol: RELAYMUX_SANDBOX_HANDS_PROTOCOL,
+      baseUrlEnv: stringOrDefault(raw.sandbox?.baseUrlEnv, defaults.sandbox.baseUrlEnv),
+      authTokenEnv: stringOrDefault(raw.sandbox?.authTokenEnv, defaults.sandbox.authTokenEnv),
+      completionCallbackTokenEnv: stringOrDefault(raw.sandbox?.completionCallbackTokenEnv, defaults.sandbox.completionCallbackTokenEnv),
+    },
+    flue: {
+      scaffoldCommand: stringOrDefault(raw.flue?.scaffoldCommand, defaults.flue.scaffoldCommand),
+      bundlePort: positiveIntegerOrDefault(raw.flue?.bundlePort, defaults.flue.bundlePort),
+      healthPath: stringOrDefault(raw.flue?.healthPath, defaults.flue.healthPath),
+    },
+  };
+}
+
+function stringOrDefault(value, fallback) {
+  const text = String(value || "").trim();
+  return text || fallback;
+}
+
+function positiveIntegerOrDefault(value, fallback) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : fallback;
 }
 
 function normalizeIntegration(defaults, override) {
