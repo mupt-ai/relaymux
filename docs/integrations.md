@@ -27,7 +27,7 @@ relaymux ask "Open an agent in ~/code/my-app to inspect the failing test."
 
 Every local API, adapter, and scheduled request is wrapped with relaymux's repo-managed default orchestrator instructions unless `orchestrator.defaultSystemPrompt` is set to `false`. Local `systemPromptFile` and `extraSystemPrompt` values are appended after those defaults for private preferences or repo-specific guidance.
 
-Those defaults bias the orchestrator toward launching visible relaymux subagents for repo changes, debugging, research, CI, docs, validation, and other work that may take more than about 2 minutes.
+Those defaults bias the orchestrator toward launching visible relaymux subagents for repo changes, debugging, research, CI, docs, validation, and other work that may take more than about 10 seconds.
 
 Send a local run-log completion from a delegated agent. Local runs still record automatic `started` and `completed` events even without the daemon:
 
