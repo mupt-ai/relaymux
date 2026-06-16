@@ -1,6 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 
+import {
+  elapsedMs,
+  finishLatencyFields,
+  formatLatencyLogLine,
+  jobType,
+  selectNextJobIndex,
+  stampQueuedJob,
+  startJobMetrics,
+  startLatencyFields,
+  summarizeQueuedJobs,
+  timedStage,
+} from "./daemon-jobs.js";
 import { createCompletionWebhookServer } from "./webhook.js";
 import { buildIncomingOrchestratorPrompt, buildTerminalOrchestratorPrompt, buildWebhookOrchestratorPrompt, runOrchestrator } from "./orchestrator.js";
 import { formatIncomingForPrompt, isImessageReceiveEnabled, isIncomingUserMessage, receiveMessages, sendMessage } from "./message-io.js";
@@ -23,6 +36,7 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
   const queuedIncomingIds = new Set();
   let processing = false;
   let scheduled = false;
+  let polling = false;
 
   const log = (...args) => io.stdout.write(`[${new Date().toISOString()}] ${args.join(" ")}\n`);
   const warn = (...args) => io.stderr.write(`[${new Date().toISOString()}] ${args.join(" ")}\n`);
@@ -31,8 +45,10 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
   function queueStatus() {
     return {
       queueLength: queue.length,
+      queueByType: summarizeQueuedJobs(queue),
       processing,
       scheduled,
+      polling,
       queuedIncomingIds: queuedIncomingIds.size,
       initialized: state.initialized,
       lastProcessedAt: state.lastProcessedAt,
@@ -53,19 +69,19 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     if (!messages.length) return;
     const ids = messages.map((message) => String(message.id));
     for (const id of ids) queuedIncomingIds.add(id);
-    queue.push({ type: "incoming", adapter, replyMode, requestId: `${adapter}-${Date.now().toString(36)}`, messages, ids, enqueuedAt: new Date().toISOString() });
+    queue.push(stampQueuedJob({ type: "incoming", adapter, replyMode, requestId: `${adapter}-${Date.now().toString(36)}`, messages, ids }));
     log(`queued incoming ${adapter} message(s): ${ids.join(",")}`);
     scheduleProcessQueue();
   }
 
   function enqueueWebhook(job) {
-    queue.push(job);
+    queue.push(stampQueuedJob(job));
     log(`queued local completion ${job.requestId} from ${job.source}; replyMode=${job.replyMode}`);
     scheduleProcessQueue();
   }
 
   function enqueueTerminalRequest(job) {
-    queue.push(job);
+    queue.push(stampQueuedJob(job));
     log(`queued terminal request ${job.requestId} from ${job.source}; replyMode=${job.replyMode}; wait=${job.wait ? "yes" : "no"}`);
     scheduleProcessQueue();
   }
@@ -77,6 +93,9 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
 
   async function processIncomingJob(job) {
     log(`processing incoming ${job.adapter || "message"} message(s): ${job.ids.join(",")}`);
+    const metrics = startJobMetrics(job, queue.length);
+    log(formatLatencyLogLine("job_start", startLatencyFields(metrics)));
+    let status = "ok";
     let marked = false;
     const markSeen = () => {
       if (marked) return;
@@ -91,69 +110,83 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
         configPath: configInfo.path,
         incomingText: formatIncomingForPrompt(job.messages, job.adapter),
       });
-      const reply = await runOrchestrator(config, { prompt, stateDir, configPath: configInfo.path, requestId: job.requestId });
-      await sendReply(config, job.replyMode || "imessage", reply, io);
+      const reply = await timedStage(metrics, "orchestratorMs", () => runOrchestrator(config, { prompt, stateDir, configPath: configInfo.path, requestId: job.requestId }));
+      await timedStage(metrics, "adapterSendMs", () => sendReply(config, job.replyMode || "imessage", reply, io));
       markSeen();
       log(`replied to ${job.ids.join(",")} via ${job.replyMode || "imessage"}`);
     } catch (error) {
+      status = "error";
       warn(`failed processing incoming ${job.ids.join(",")}:`, describeError(error));
       try {
-        await sendReply(config, job.replyMode || "imessage", `relaymux orchestrator hit an error: ${error.message || String(error)}`, io);
+        await timedStage(metrics, "adapterSendMs", () => sendReply(config, job.replyMode || "imessage", `relaymux orchestrator hit an error: ${error.message || String(error)}`, io));
       } catch (sendError) {
         warn("also failed to send error message:", describeError(sendError));
       }
       markSeen();
     } finally {
       for (const id of job.ids) queuedIncomingIds.delete(id);
+      log(formatLatencyLogLine("job_done", finishLatencyFields(metrics, status)));
     }
   }
 
   async function processWebhookJob(job) {
     log(`processing local completion ${job.requestId} from ${job.source}`);
+    const metrics = startJobMetrics(job, queue.length);
+    log(formatLatencyLogLine("job_start", startLatencyFields(metrics)));
+    let status = "ok";
     try {
       const prompt = buildWebhookOrchestratorPrompt({ config, configPath: configInfo.path, job });
-      const reply = await runOrchestrator(config, { prompt, stateDir, configPath: configInfo.path, requestId: job.requestId });
+      const reply = await timedStage(metrics, "orchestratorMs", () => runOrchestrator(config, { prompt, stateDir, configPath: configInfo.path, requestId: job.requestId }));
       if (job.replyMode === "none") {
         log(`processed quiet completion ${job.requestId}: ${oneLine(reply).slice(0, 240)}`);
       } else {
-        await sendReply(config, job.replyMode, reply, io);
+        await timedStage(metrics, "adapterSendMs", () => sendReply(config, job.replyMode, reply, io));
         log(`sent ${job.replyMode} completion reply for ${job.requestId}`);
       }
     } catch (error) {
+      status = "error";
       warn(`failed processing local completion ${job.requestId}:`, describeError(error));
       if (job.replyMode !== "none") {
         try {
-          await sendReply(config, job.replyMode, `relaymux orchestrator hit an error processing ${job.source}: ${error.message || String(error)}`, io);
+          await timedStage(metrics, "adapterSendMs", () => sendReply(config, job.replyMode, `relaymux orchestrator hit an error processing ${job.source}: ${error.message || String(error)}`, io));
         } catch (sendError) {
           warn("also failed to send completion error message:", describeError(sendError));
         }
       }
+    } finally {
+      log(formatLatencyLogLine("job_done", finishLatencyFields(metrics, status)));
     }
   }
 
   async function processTerminalRequestJob(job) {
     log(`processing terminal request ${job.requestId} from ${job.source}`);
+    const metrics = startJobMetrics(job, queue.length);
+    log(formatLatencyLogLine("job_start", startLatencyFields(metrics)));
+    let status = "ok";
     try {
       const prompt = buildTerminalOrchestratorPrompt({ config, configPath: configInfo.path, job });
-      const reply = await runOrchestrator(config, { prompt, stateDir, configPath: configInfo.path, requestId: job.requestId });
+      const reply = await timedStage(metrics, "orchestratorMs", () => runOrchestrator(config, { prompt, stateDir, configPath: configInfo.path, requestId: job.requestId }));
       if (job.replyMode === "none") {
         log(`processed terminal request ${job.requestId}: ${oneLine(reply).slice(0, 240)}`);
       } else {
-        await sendReply(config, job.replyMode, reply, io);
+        await timedStage(metrics, "adapterSendMs", () => sendReply(config, job.replyMode, reply, io));
         log(`sent ${job.replyMode} terminal request reply for ${job.requestId}`);
       }
       job.deferred?.resolve({ ok: true, queued: false, reply });
     } catch (error) {
+      status = "error";
       const message = `relaymux orchestrator hit an error processing ${job.source}: ${error.message || String(error)}`;
       warn(`failed processing terminal request ${job.requestId}:`, describeError(error));
       if (job.replyMode !== "none") {
         try {
-          await sendReply(config, job.replyMode, message, io);
+          await timedStage(metrics, "adapterSendMs", () => sendReply(config, job.replyMode, message, io));
         } catch (sendError) {
           warn("also failed to send terminal request error message:", describeError(sendError));
         }
       }
       job.deferred?.resolve({ ok: false, queued: false, error: message });
+    } finally {
+      log(formatLatencyLogLine("job_done", finishLatencyFields(metrics, status)));
     }
   }
 
@@ -162,7 +195,11 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
     processing = true;
     try {
       while (queue.length > 0) {
-        const job = queue.shift();
+        const nextIndex = selectNextJobIndex(queue);
+        const job = nextIndex <= 0 ? queue.shift() : queue.splice(nextIndex, 1)[0];
+        if (nextIndex > 0) {
+          log(formatLatencyLogLine("queue_priority", { selectedType: jobType(job), skippedJobs: nextIndex, queueLength: queue.length + 1 }));
+        }
         if (job.type === "incoming" || job.type === "imessage") await processIncomingJob(job);
         else if (job.type === "webhook") await processWebhookJob(job);
         else if (job.type === "request") await processTerminalRequestJob(job);
@@ -175,27 +212,41 @@ export async function runDaemon({ flags, configInfo, stateDir, io = defaultIo() 
   }
 
   async function pollOnce() {
-    if (processing || queue.length > 0) return;
-    const seen = new Set((state.seenIncomingIds || []).map(String));
-    if (inboundImessageEnabled) {
-      try {
-        const recent = await receiveMessages(config);
-        const fresh = freshIncoming(recent, seen, queuedIncomingIds);
-        if (fresh.length) enqueueIncoming("imessage", fresh, "imessage");
-      } catch (error) {
-        warn("iMessage poll failed:", describeError(error));
+    if (polling) return;
+    polling = true;
+    try {
+      if (inboundImessageEnabled) {
+        const pollStarted = performance.now();
+        try {
+          const recent = await receiveMessages(config);
+          const fresh = freshIncoming(recent, seenIncomingIds(state), queuedIncomingIds);
+          logPollLatency("imessage", pollStarted, recent.length, fresh.length);
+          if (fresh.length) enqueueIncoming("imessage", fresh, "imessage");
+        } catch (error) {
+          warn("iMessage poll failed:", describeError(error));
+        }
       }
-    }
-    if (inboundTelegramEnabled) {
-      try {
-        const recent = await receiveTelegramMessages(config, state, io.env || process.env);
-        saveState();
-        const fresh = freshIncoming(recent, seen, queuedIncomingIds);
-        if (fresh.length) enqueueIncoming("telegram", fresh, "telegram");
-      } catch (error) {
-        warn("Telegram poll failed:", describeError(error));
+      if (inboundTelegramEnabled) {
+        const pollStarted = performance.now();
+        try {
+          const recent = await receiveTelegramMessages(config, state, io.env || process.env);
+          saveState();
+          const fresh = freshIncoming(recent, seenIncomingIds(state), queuedIncomingIds);
+          logPollLatency("telegram", pollStarted, recent.length, fresh.length);
+          if (fresh.length) enqueueIncoming("telegram", fresh, "telegram");
+        } catch (error) {
+          warn("Telegram poll failed:", describeError(error));
+        }
       }
+    } finally {
+      polling = false;
     }
+  }
+
+  function logPollLatency(adapter, startedAt, messages, fresh) {
+    const durationMs = elapsedMs(startedAt);
+    if (!fresh && durationMs < 1000) return;
+    log(formatLatencyLogLine("poll", { adapter, durationMs, messages, fresh, queueLength: queue.length, processing }));
   }
 
   const inboundImessageEnabled = isImessageReceiveEnabled(config);
@@ -303,6 +354,10 @@ function rememberSeen(state, ids) {
   for (const id of ids) seen.add(String(id));
   state.seenIncomingIds = Array.from(seen).slice(-1000);
   state.lastProcessedAt = new Date().toISOString();
+}
+
+function seenIncomingIds(state) {
+  return new Set((state.seenIncomingIds || []).map(String));
 }
 
 function freshIncoming(messages, seen, queuedIncomingIds) {

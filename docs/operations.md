@@ -80,6 +80,15 @@ relaymux doctor
 
 You may need to grant the terminal or automation host the macOS permissions required by your message tool, such as Full Disk Access or Messages automation permission.
 
+Daemon logs include compact latency lines for debugging slow turns:
+
+```text
+latency job_done type=incoming requestId=... queueWaitMs=12 orchestratorMs=9040 adapterSendMs=520 totalMs=9568
+latency poll adapter=imessage durationMs=1180 messages=20 fresh=1 queueLength=1 processing=true
+```
+
+The latency lines intentionally include ids, durations, adapter names, and queue counts, but not prompt text, adapter message text, chat ids, tokens, or secrets.
+
 If Telegram sending fails, verify the chat id, token source, and token file permissions:
 
 ```bash
