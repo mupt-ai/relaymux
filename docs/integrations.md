@@ -44,6 +44,7 @@ Use a stable `--idempotency-key` for one logical update so retries do not send d
 | `telegram` | The daemon passes the update to the orchestrator, then sends the orchestrator's user-visible reply through the optional Telegram adapter. |
 
 Use `--reply-mode imessage` or `--reply-mode telegram` only when that adapter is configured and you want a user-visible update.
+Completion updates always pass through the orchestrator first so it can observe, compress, and decide what user-visible adapter update to send.
 
 ## Scheduled Prompts
 
