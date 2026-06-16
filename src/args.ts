@@ -6,6 +6,7 @@ const BOOLEAN_FLAGS = new Set([
   "create-worktree",
   "dry-run",
   "force",
+  "flue",
   "help",
   "history",
   "hold",

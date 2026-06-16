@@ -4,4 +4,5 @@ Start with the [README quickstart](../README.md). The docs here hold the details
 
 - [Configuration](configuration.md): config shape, prompt passing, tmux sessions, and common launch patterns.
 - [Integrations](integrations.md): local API, `relaymux ask`, `relaymux notify`, scheduled prompts, iMessage/SMS, and Telegram.
+- [Cloud Agent](cloud-agent.md): optional Flue scaffold and sandbox hands protocol.
 - [Operations](operations.md): background service, watchdog, safety model, troubleshooting, and development commands.

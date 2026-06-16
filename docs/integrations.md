@@ -108,7 +108,7 @@ relaymux notify \
 
 ## Telegram
 
-The Telegram adapter is optional outbound notification support through `sendMessage`. It does not poll Telegram for inbound messages.
+The Telegram adapter is optional inbound and outbound support through the Telegram Bot API. Local relaymux polls `getUpdates` when receive is enabled and sends replies with `sendMessage`.
 
 Create a bot with BotFather, get a chat id for the chat you want to notify, and store the token outside the public config. A token file works well with the background service because it does not depend on your interactive shell environment:
 

@@ -60,6 +60,10 @@ An agent is a command template in `~/.relaymux/config.json`. If you configure `p
 
 The orchestrator is also a command, but it has a different job from an agent. The orchestrator handles inbound requests from `relaymux ask` or optional message adapters. Agents do delegated work launched with `relaymux launch`. The orchestrator receives incoming text plus relaymux instructions and prints a reply on stdout.
 
+## Cloud Agent Config
+
+`cloudAgent` is disabled by default and only describes the optional cloud-agent boundary. The first supported provider is `flue`; secret-bearing fields are env var names such as `TELEGRAM_BOT_TOKEN`, `RELAYMUX_SANDBOX_BASE_URL`, and `RELAYMUX_SANDBOX_TOKEN`, never literal token values. Generate the starter bundle with `relaymux cloud scaffold --flue --out <dir>` and see [Cloud Agent](cloud-agent.md) for the sandbox hands protocol.
+
 ## Prompt Passing
 
 If a command contains `{prompt}` or `{promptFile}`, relaymux substitutes those values. Agent command templates can also use run context such as `{agent}`, `{name}`, `{repo}`, `{workdir}`, `{runId}`, and `{session}`. If the command does not contain a prompt placeholder, `promptMode` decides what to do with the prompt:
