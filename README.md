@@ -80,7 +80,7 @@ tmux attach -t agents
 
 ## iMessage/SMS beta
 
-iMessage/SMS depends on a working local `imsg` command. The minimal setup is:
+iMessage/SMS depends on a working local [`imsg`](https://github.com/openclaw/imsg) command. The minimal setup is:
 
 ```bash
 relaymux setup --imsg
