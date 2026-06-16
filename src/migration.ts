@@ -5,7 +5,7 @@ import path from "node:path";
 import { defaultConfigPath, legacyDefaultConfigPath, legacyDefaultStateDir } from "./config.js";
 import { defaultRelaymuxHome, expandPath, ensureDirectory } from "./paths.js";
 
-const HOME_SUBDIRS = ["state", "logs", "tasks", "reports", "research", "workouts"];
+const HOME_SUBDIRS = ["state", "logs", "tasks", "reports", "research"];
 const STATE_RELAYMUX_NAMES = new Set([
   "daemon-state.json",
   "events.jsonl",
@@ -161,7 +161,7 @@ export function formatHomeMigrationInventory(inventory, { applying = false, forc
   lines.push(`relaymux home: ${inventory.homeDir}`);
   lines.push(`target config: ${inventory.configPath}`);
   lines.push(`mode: ${applying ? "apply" : "dry-run/inventory"}${force ? "; force overwrite" : ""}${symlink ? "; replace migrated sources with symlinks" : ""}`);
-  lines.push("managed layout: config.json, state/, logs/, tasks/, reports/, research/, workouts/");
+  lines.push("managed layout: config.json, state/, logs/, tasks/, reports/, research/");
 
   if (!inventory.items.length) {
     lines.push("No relaymux-owned legacy files found in known locations.");

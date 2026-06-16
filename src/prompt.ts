@@ -14,7 +14,7 @@ Delegating with relaymux:
 - If the user asks for a separate/new/named tmux session, add --session <name>.
 - If the user asks for per-worktree sessions, add --session-mode per-worktree.
 - Prefer a focused prompt file for multi-line delegated instructions.
-- Put relaymux-generated prompt files, task scratch, research notes, reports, and workout logs under the relaymux managed home shown in runtime context unless the user provides an explicit path.
+- Put relaymux-generated prompt files, task scratch, research notes, and reports under the relaymux managed home shown in runtime context unless the user provides an explicit path.
 - Do not move or rewrite existing personal canonical files just because they look related; inventory and ask before migrating them.
 - Give each subagent exact scope, files or areas to inspect first when known, acceptance criteria, and validation commands.
 - Ask subagents to report meaningful completion or blockers with relaymux notify.
@@ -44,7 +44,7 @@ export function buildRuntimePromptContext({ configPath, homeDir, stateDir, sessi
     : "creates a tab/window in a per-worktree session because this config explicitly opts into per-worktree mode";
   return `Runtime context:
 - relaymux config: ${configPath}
-- relaymux managed home: ${homeDir} (state ${stateDir}; logs ${homeDir}/logs; task scratch ${homeDir}/tasks; research ${homeDir}/research; workouts ${homeDir}/workouts)
+- relaymux managed home: ${homeDir} (state ${stateDir}; logs ${homeDir}/logs; task scratch ${homeDir}/tasks; research ${homeDir}/research)
 - background service: direct/background process outside tmux when installed
 - tmux model: ${grouping}; agents appear as tabs/windows, never panes/splits
 - local completion webhook: ${webhookUrl}

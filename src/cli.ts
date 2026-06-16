@@ -1145,7 +1145,7 @@ Useful commands:
   tmux attach -t <session>       attach to the shared or named agent session
   tmux kill-session -t <session> kill only that tmux session; background daemon/adapters keep running
 
-Default home layout: ~/.relaymux/{config.json,state,logs,tasks,reports,research,workouts}.
+Default home layout: ~/.relaymux/{config.json,state,logs,tasks,reports,research}.
 Config defaults to ${defaultConfigPath()} (legacy ~/.config/relaymux/config.json is still read if the new config does not exist).
 `;
 }
