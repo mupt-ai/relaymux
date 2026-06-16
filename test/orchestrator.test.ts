@@ -29,8 +29,13 @@ test("orchestrator requests include repo-managed best practices by default", () 
   });
 
   assert.match(prompt, /You are a local relaymux orchestrator/);
-  assert.match(prompt, /delegate to tmux subagents/);
+  assert.match(prompt, /Delegate by default when the work may take more than about 2 minutes/);
+  assert.match(prompt, /repo code changes, PR fixes, deploy\/debugging work, deep research, CI loops, docs rewrites, long validation, and multi-file edits/);
+  assert.match(prompt, /Do quick routing, lightweight read-only inspection, tiny personal-file edits, and quick answers inline/);
   assert.match(prompt, /Do not add --session or --session-mode/);
+  assert.match(prompt, /inspect relaymux status and the tmux window\/pane output before claiming that it started/);
+  assert.match(prompt, /belongs to an existing active subagent\/tab, send the instruction to that tab instead of launching a duplicate run/);
+  assert.match(prompt, /Do not use one-shot model print-mode or non-interactive shortcuts as a substitute/);
   assert.match(prompt, /Include an idempotency key/);
   assert.match(prompt, /prefer an isolated branch or worktree/);
   assert.match(prompt, /# Terminal request/);
