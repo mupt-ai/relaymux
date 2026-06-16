@@ -21,9 +21,15 @@ test("writeDefaultConfig creates a loadable config", () => {
   assert.equal(config.daemon.launchMode, "direct");
   assert.equal(config.tmux.sessionMode, "shared");
   assert.ok(config.orchestrator.command);
+  assert.equal(config.orchestrator.defaultSystemPrompt, true);
+  assert.equal(config.orchestrator.systemPromptFile, "");
+  assert.equal(config.orchestrator.extraSystemPrompt, "");
   assert.ok(config.agents.codex);
   assert.equal(config.agents.codex.command.includes("--reasoning-effort"), false);
   assert.equal(config.launchNotifications.onExit, "never");
+  const written = fs.readFileSync(configPath, "utf8");
+  assert.doesNotMatch(written, /You are a local relaymux orchestrator/);
+  assert.doesNotMatch(written, /SOUL\.md/);
 });
 
 test("loadConfig treats legacy top-level imessage as enabled integration", () => {

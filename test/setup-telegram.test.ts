@@ -47,6 +47,10 @@ test("buildTelegramConfig uses a placeholder orchestrator when no agent CLI is i
 
   assert.equal(config.orchestrator.command[0], "/bin/sh");
   assert.ok(config.orchestrator.description.includes("Placeholder orchestrator"));
+  assert.equal(config.orchestrator.defaultSystemPrompt, true);
+  assert.equal(config.orchestrator.systemPromptFile, "");
+  assert.equal(config.orchestrator.extraSystemPrompt, "");
+  assert.doesNotMatch(JSON.stringify(config), /You are a local relaymux orchestrator/);
   assert.ok(config.agents.custom);
 });
 

@@ -92,7 +92,7 @@ export function defaultConfig(env = process.env) {
       logDir,
     },
     orchestrator: {
-      description: "Pi orchestrator command. Use a non-interactive Pi invocation if your pi binary supports one.",
+      description: "Local orchestrator command. Edit this command to match your local agent CLI.",
       cwd: "~",
       command: ["pi", "{prompt}"],
       promptMode: "arg",
@@ -100,6 +100,7 @@ export function defaultConfig(env = process.env) {
       timeoutMode: "activity",
       hardTimeoutMs: 0,
       maxBufferBytes: 10 * 1024 * 1024,
+      defaultSystemPrompt: true,
       systemPromptFile: "",
       extraSystemPrompt: "",
     },
