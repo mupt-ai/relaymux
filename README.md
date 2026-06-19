@@ -8,7 +8,7 @@ Telegram is the main supported interface. iMessage/SMS support exists, but it is
 
 ## Requirements
 
-You need Node.js 20+, npm, `tmux`, and a local agent CLI such as `pi`, `codex`, or `claude`. The installer uses `curl` and `tar` by default; it only needs `git` as a fallback.
+You need Node.js 20+, npm, `tmux`, and a local agent CLI such as `pi`, `codex`, or `claude`. The installer uses `curl` and `tar` by default; it only needs `git` as a fallback. SQLite support uses the system `sqlite3` CLI for `relaymux db` commands; normal launch, status, notify, and adapter commands do not require it.
 
 ## Install
 
@@ -103,3 +103,11 @@ relaymux status --history
 ```
 
 Logs live in `~/.relaymux/logs`. Config lives at `~/.relaymux/config.json`.
+
+relaymux also owns a first-party SQLite database at `~/.relaymux/relaymux.sqlite3` by default. Initialize or inspect it with:
+
+```bash
+relaymux db path
+relaymux db init
+relaymux db status
+```

@@ -7,12 +7,30 @@ relaymux stores private config, run records, prompts, logs, and local API token 
 ```text
 ~/.relaymux/
   config.json     # private config, written mode 0600
+  relaymux.sqlite3 # first-party relaymux SQLite database
   state/          # run records, prompts, scripts, schedules, daemon state, local API token
   logs/           # background service stdout/stderr logs
   tasks/          # optional task scratch space
   reports/        # optional reports
   research/       # optional research notes
 ```
+
+## SQLite Store
+
+relaymux owns one canonical SQLite database at `<relaymux home>/relaymux.sqlite3`; with the default home this is `~/.relaymux/relaymux.sqlite3`. The path comes from `RELAYMUX_HOME` when set, otherwise the normal relaymux home, not the current working directory.
+
+The first-party schema is managed by relaymux migrations and uses the `relaymux_` table prefix. Current managed tables are:
+
+| Table | Purpose |
+| --- | --- |
+| `relaymux_schema_migrations` | Applied relaymux DB migrations. |
+| `relaymux_metadata` | Small key/value metadata for the relaymux DB. |
+| `relaymux_runs` | Generic run records for first-party local state. |
+| `relaymux_events` | Generic run/event records for first-party local state. |
+
+Use `relaymux db path`, `relaymux db init`, `relaymux db status`, and `relaymux db schema` to inspect or initialize the database. These commands use the system `sqlite3` CLI; relaymux does not install a native SQLite npm dependency.
+
+Local extension or domain-specific tables can live in the same database, but relaymux only owns and migrates the `relaymux_` tables. Use a distinct table prefix for extension data.
 
 ## Core Config
 
