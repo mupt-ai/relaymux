@@ -46,6 +46,7 @@ test("loadConfig treats legacy top-level imessage as enabled integration", () =>
 
   assert.equal(config.integrations.imessage.enabled, true);
   assert.equal(config.integrations.imessage.chatId, "chat-1");
+  assert.ok(config.integrations.imessage.receive.command.argv.includes("{chatId}"));
   assert.equal(config.launchNotifications.replyMode, "imessage");
 });
 

@@ -99,6 +99,8 @@ relaymux status
 
 `relaymux setup --imsg` creates or updates `~/.relaymux/config.json`, tries to discover recent `imsg` chats when `--chat-id` is omitted, installs/restarts the background service unless `--no-launch-agent` is passed, and prints next steps. Re-running `relaymux init --imsg` or `relaymux setup --imsg` adds or updates the adapter on the existing config; `--force` is only for replacing the whole config.
 
+Inbound iMessage/SMS access is allowlisted by the configured chat id. Receive commands must include the `{chatId}` template so polling is scoped to `config.integrations.imessage.chatId`. relaymux also inspects parsed command output: if a message exposes a chat, conversation, or thread id, the id must exactly match the configured chat id or the message is ignored before it reaches the orchestrator. Legacy command output that has no explicit chat id is accepted only under the scoped `{chatId}` receive command.
+
 After setup, text the configured chat with a small request. Use a chat where your request appears as an incoming message to the Mac's Messages account; messages marked by Messages as sent by that Mac are ignored so relaymux does not respond to its own replies.
 
 Manual user-visible completion:

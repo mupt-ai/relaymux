@@ -46,6 +46,7 @@ export function normalizeMessage(message, index = 0) {
     text,
     createdAt: String(createdAt || ""),
     sender: String(message.sender ?? message.from ?? message.handle ?? ""),
+    chatId: extractMessageChatId(message).value,
     isFromMe,
     attachments: Array.isArray(message.attachments) ? message.attachments : [],
   };
@@ -97,6 +98,10 @@ export function buildAdapterArgv(commandConfig, context) {
   return commandConfig.argv.map((part) => renderTemplate(part, context));
 }
 
+export function isReceiveCommandScopedToChat(commandConfig) {
+  return Array.isArray(commandConfig?.argv) && commandConfig.argv.some((part) => String(part).includes("{chatId}"));
+}
+
 export function isImessageReceiveEnabled(config) {
   const imessage = getIntegration(config, "imessage");
   const receive = imessage.receive || {};
@@ -110,13 +115,18 @@ export async function receiveMessages(config) {
   if (receive.backend !== "command") throw new Error(`unsupported iMessage receive backend: ${receive.backend || "missing"}`);
 
   const commandConfig = receive.command || {};
-  const argv = buildAdapterArgv(commandConfig, messageContext(config, { limit: imessage.syncLimit || 5 }));
+  const chatId = configuredImessageChatId(imessage);
+  const commandScopedToChat = isReceiveCommandScopedToChat(commandConfig);
+  if (!commandScopedToChat) {
+    throw new Error("iMessage receive command argv must include {chatId} so inbound polling is scoped to config.integrations.imessage.chatId");
+  }
+  const argv = buildAdapterArgv(commandConfig, messageContext(config, { chatId, limit: imessage.syncLimit || 5 }));
   const result = await runCommandAsync(argv[0], argv.slice(1), {
     cwd: expandPath(commandConfig.cwd || "~"),
     timeoutMs: Number(commandConfig.timeoutMs || 30000),
     maxBuffer: Number(commandConfig.maxBufferBytes || 10 * 1024 * 1024),
   });
-  return normalizeMessages(parseMessageOutput(result.stdout));
+  return normalizeMessages(filterImessageMessagesForChat(parseMessageOutput(result.stdout), chatId, { commandScopedToChat }));
 }
 
 export async function sendMessage(config: any, text: string, io: any = process) {
@@ -164,6 +174,78 @@ export function messageContext(config, extra = {}) {
     text: "",
     ...extra,
   };
+}
+
+export function filterImessageMessagesForChat(messages, configuredChatId, { commandScopedToChat = false } = {}) {
+  const chatId = String(configuredChatId || "").trim();
+  if (!chatId || chatId === "CHAT_ID_OR_PHONE") return [];
+
+  return messages.filter((message) => {
+    const messageChatId = extractMessageChatId(message);
+    if (messageChatId.exposed) return messageChatId.value === chatId;
+    return commandScopedToChat;
+  });
+}
+
+function configuredImessageChatId(imessage) {
+  const chatId = String(imessage.chatId || "").trim();
+  if (!chatId || chatId === "CHAT_ID_OR_PHONE") {
+    throw new Error("iMessage receive requires config.integrations.imessage.chatId");
+  }
+  return chatId;
+}
+
+function extractMessageChatId(message) {
+  const topLevelFields = [
+    "chatId",
+    "chatID",
+    "chat_id",
+    "chatIdentifier",
+    "chat_identifier",
+    "chatGuid",
+    "chatGUID",
+    "chat_guid",
+    "conversationId",
+    "conversationID",
+    "conversation_id",
+    "conversationIdentifier",
+    "conversation_identifier",
+    "conversationGuid",
+    "conversationGUID",
+    "conversation_guid",
+    "threadId",
+    "threadID",
+    "thread_id",
+    "threadIdentifier",
+    "thread_identifier",
+    "threadGuid",
+    "threadGUID",
+    "thread_guid",
+  ];
+  for (const key of topLevelFields) {
+    if (hasOwn(message, key)) return { exposed: true, value: stringifyChatId(message[key]) };
+  }
+
+  for (const key of ["chat", "conversation", "thread"]) {
+    if (!hasOwn(message, key)) continue;
+    const value = message[key];
+    if (value === null || value === undefined) return { exposed: true, value: "" };
+    if (typeof value !== "object") return { exposed: true, value: stringifyChatId(value) };
+    for (const nestedKey of ["id", "chatId", "chatID", "chat_id", "guid", "identifier", "rowid"]) {
+      if (hasOwn(value, nestedKey)) return { exposed: true, value: stringifyChatId(value[nestedKey]) };
+    }
+    return { exposed: true, value: "" };
+  }
+
+  return { exposed: false, value: "" };
+}
+
+function stringifyChatId(value) {
+  return value === undefined || value === null ? "" : String(value).trim();
+}
+
+function hasOwn(value, key) {
+  return value !== null && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function fallbackMessageId({ text, createdAt, index }) {

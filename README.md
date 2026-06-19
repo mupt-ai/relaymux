@@ -92,6 +92,8 @@ relaymux will try to show recent chats. Pick one, then text that chat to use rel
 relaymux setup --imsg --chat-id '<chat-id-or-phone-number>'
 ```
 
+Inbound iMessage/SMS handling is restricted to the configured chat id. The receive command must be scoped with `{chatId}`; if command output includes a chat, conversation, or thread id, relaymux only accepts messages whose id exactly matches the configured chat. Older command output without an explicit chat id is accepted only when the receive command is scoped this way.
+
 ## Troubleshooting
 
 ```bash
