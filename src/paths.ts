@@ -10,6 +10,10 @@ export function defaultRelaymuxHomeConfigValue(env = process.env) {
   return env.RELAYMUX_HOME ? expandPath(env.RELAYMUX_HOME) : "~/.relaymux";
 }
 
+export function defaultRelaymuxDatabasePath(env = process.env) {
+  return path.join(defaultRelaymuxHome(env), "relaymux.sqlite3");
+}
+
 export function expandPath(value, cwd = process.cwd()) {
   if (!value) {
     return value;

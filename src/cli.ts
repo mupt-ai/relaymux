@@ -7,6 +7,7 @@ import { parseArgv } from "./args.js";
 import { buildAgentInvocation, buildTmuxShellCommand, buildTmuxShellScript, quoteArgv, renderTemplate, shellExportBlock } from "./command.js";
 import { assertNoFatalCommandFindings } from "./command-validation.js";
 import { collectDoctorChecks } from "./doctor.js";
+import { expectedSchemaSql, initRelaymuxDb, relaymuxDbPath, relaymuxDbStatus } from "./db.js";
 import { defaultConfig, defaultConfigPath, getIntegration, isIntegrationEnabled, loadConfig, resolveLogDir, resolveStateDir, writeConfig } from "./config.js";
 import { runDaemon } from "./daemon.js";
 import { backgroundServicePath, getLaunchAgentStatus, getLaunchAgentWatchdogStatus, installLaunchAgent, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
@@ -50,6 +51,8 @@ export async function main(argv, io = defaultIo()) {
     switch (parsed.command) {
       case "migrate-home":
         return handleMigrateHome(parsed.flags, configInfo, io);
+      case "db":
+        return handleDb(parsed.flags, parsed.positionals, io);
       case "launch":
         return handleLaunch(parsed.flags, configInfo, stateDir, io);
       case "status":
@@ -350,6 +353,90 @@ function handleMigrateHome(flags, configInfo, io) {
     io.stdout.write(formatHomeMigrationResults(results));
   }
   return 0;
+}
+
+function handleDb(flags, positionals, io) {
+  const subcommand = positionals[0] || "status";
+  const dbPath = relaymuxDbPath(io.env);
+
+  if (subcommand === "path") {
+    if (flags.json) {
+      io.stdout.write(`${JSON.stringify({ path: dbPath }, null, 2)}\n`);
+    } else {
+      io.stdout.write(`${dbPath}\n`);
+    }
+    return 0;
+  }
+
+  if (subcommand === "schema") {
+    io.stdout.write(expectedSchemaSql());
+    return 0;
+  }
+
+  if (subcommand === "init") {
+    const result = initRelaymuxDb({ dbPath, env: io.env });
+    if (flags.json) {
+      io.stdout.write(`${JSON.stringify(dbCommandResult(result), null, 2)}\n`);
+      return 0;
+    }
+
+    io.stdout.write(`DB: ${result.dbPath}\n`);
+    io.stdout.write(`sqlite3: ${result.sqlitePath}\n`);
+    if (result.applied.length === 0) {
+      io.stdout.write(`Schema: up to date at version ${result.currentVersion}\n`);
+    } else {
+      io.stdout.write(`Applied ${result.applied.length} migration(s): ${formatMigrationList(result.applied)}\n`);
+      io.stdout.write(`Schema: version ${result.currentVersion}\n`);
+    }
+    return 0;
+  }
+
+  if (subcommand === "status") {
+    const status = relaymuxDbStatus({ dbPath, env: io.env });
+    if (flags.json) {
+      io.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+    } else {
+      io.stdout.write(formatDbStatus(status));
+    }
+    return status.sqlite.available && !status.error ? 0 : 1;
+  }
+
+  throw new Error(`Unknown db command "${subcommand}". Use path, init, status, or schema.`);
+}
+
+function dbCommandResult(result) {
+  return {
+    dbPath: result.dbPath,
+    sqlitePath: result.sqlitePath,
+    applied: result.applied,
+    migrations: result.migrations,
+    currentVersion: result.currentVersion,
+    expectedVersion: result.expectedVersion,
+  };
+}
+
+function formatDbStatus(status) {
+  const lines = [
+    `DB: ${status.dbPath}`,
+    `sqlite3: ${status.sqlite.available ? status.sqlite.path : "missing"}`,
+    `exists: ${status.exists ? "yes" : "no"}`,
+    `initialized: ${status.initialized ? "yes" : "no"}`,
+    `schema: current ${status.currentVersion}, expected ${status.expectedVersion}, pending ${status.pending.length}`,
+  ];
+  if (status.migrations.length > 0) {
+    lines.push(`migrations: ${formatMigrationList(status.migrations)}`);
+  }
+  if (status.pending.length > 0) {
+    lines.push(`pending: ${formatMigrationList(status.pending)}`);
+  }
+  if (status.error) {
+    lines.push(`error: ${status.error}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatMigrationList(migrations) {
+  return migrations.map((migration) => `v${migration.version} ${migration.name}`).join(", ");
 }
 
 function handleLaunch(flags, configInfo, stateDir, io) {
@@ -809,7 +896,7 @@ function handleStatus(flags, configInfo, stateDir, io, platform = process.platfo
 
   const launchAgent: any = daemon.launchAgent;
   const launchAgentText = formatBackgroundServiceSummary(launchAgent, platform);
-  io.stdout.write(`Home: ${daemon.homeDir}; config ${daemon.configPath}; state ${daemon.stateDir}; logs ${daemon.logDir}\n`);
+  io.stdout.write(`Home: ${daemon.homeDir}; config ${daemon.configPath}; state ${daemon.stateDir}; logs ${daemon.logDir}; db ${daemon.dbPath}\n`);
   const watchdog: any = daemon.launchAgentWatchdog;
   const watchdogText = formatBackgroundWatchdogSummary(watchdog, platform);
   io.stdout.write(`Background service: ${daemon.enabled ? "enabled" : "disabled"}; mode ${daemon.launchMode}/background (no tmux); ${launchAgentText}; ${watchdogText}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}\n`);
@@ -856,6 +943,7 @@ function daemonStatus(config, configPath, env = process.env, platform = process.
   return {
     enabled: config.daemon?.enabled !== false,
     homeDir: path.dirname(defaultConfigPath(env)),
+    dbPath: relaymuxDbPath(env),
     configPath,
     stateDir: resolveStateDir(config, env),
     logDir: resolveLogDir(config, env),
@@ -1076,6 +1164,8 @@ Usage:
   relaymux schedule list|remove [--name <name>]
   relaymux status [--json] [--session <name>]
   relaymux notify [--run-id <id>] [--reply-mode imessage|telegram|none] [--message <text>]
+  relaymux db path|init|status [--json]
+  relaymux db schema
   relaymux migrate-home [--dry-run] [--apply] [--symlink]
   relaymux doctor
 
@@ -1134,6 +1224,12 @@ Request/notify/status options:
   --metadata-json <json>     For notify: optional metadata object
   --history                  For status: include old run records whose tmux tabs are gone
 
+DB options:
+  relaymux db path            Print the canonical relaymux SQLite path
+  relaymux db init            Create/update the first-party relaymux SQLite schema; requires sqlite3
+  relaymux db status          Report sqlite3 availability, DB existence, and migration state
+  relaymux db schema          Print the expected first-party relaymux schema SQL
+
 Schedule options:
   --cron <expr>              Five-field cron schedule for relaymux schedule add
   --scheduler <backend>      auto, launchd, or cron (default auto)
@@ -1145,7 +1241,7 @@ Useful commands:
   tmux attach -t <session>       attach to the shared or named agent session
   tmux kill-session -t <session> kill only that tmux session; background daemon/adapters keep running
 
-Default home layout: ~/.relaymux/{config.json,state,logs,tasks,reports,research}.
+Default home layout: ~/.relaymux/{config.json,relaymux.sqlite3,state,logs,tasks,reports,research}.
 Config defaults to ${defaultConfigPath()} (legacy ~/.config/relaymux/config.json is still read if the new config does not exist).
 `;
 }

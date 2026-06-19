@@ -14,6 +14,20 @@ test("doctor does not check optional message adapters by default", () => {
   assert.equal(names.includes("telegram-token"), false);
 });
 
+test("doctor reports sqlite3 as a nonfatal DB dependency", () => {
+  const config = defaultConfig({ PATH: "", RELAYMUX_HOME: "/tmp/relaymux-home" });
+  const checks = collectDoctorChecks(config, { exists: false, path: "/tmp/relaymux-config.json" }, {
+    PATH: "",
+    RELAYMUX_HOME: "/tmp/relaymux-home",
+  });
+  const sqliteCheck = checks.find((check) => check.name === "sqlite3");
+
+  assert.equal(sqliteCheck?.ok, false);
+  assert.equal(sqliteCheck?.fatal, false);
+  assert.equal(sqliteCheck?.severity, "warning");
+  assert.match(sqliteCheck?.detail || "", /relaymux\.sqlite3/);
+});
+
 test("doctor checks Telegram only when enabled without printing token contents", () => {
   const config = {
     ...defaultConfig({ PATH: "" }),

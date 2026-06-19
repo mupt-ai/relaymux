@@ -8,6 +8,7 @@ import { runCommand } from "./process.js";
 import { backgroundServicePath, getLaunchAgentStatus, getLaunchAgentWatchdogStatus, launchAgentPath, launchAgentWatchdogPath } from "./launch-agent.js";
 import { defaultRelaymuxHome } from "./paths.js";
 import { webhookStatus } from "./webhook.js";
+import { findSqliteCli, relaymuxDbPath } from "./db.js";
 
 export function findExecutable(command, env = process.env) {
   if (!command) {
@@ -65,6 +66,17 @@ export function collectDoctorChecks(config, configInfo, env = process.env, optio
     name: "relaymux-home",
     ok: true,
     detail: `${defaultRelaymuxHome(env)}; default config ${defaultConfigPath(env)}; state ${resolveStateDir(config, env)}; logs ${resolveLogDir(config, env)}`,
+  });
+
+  const sqlitePath = findSqliteCli(env);
+  checks.push({
+    name: "sqlite3",
+    ok: Boolean(sqlitePath),
+    fatal: false,
+    severity: sqlitePath ? undefined : "warning",
+    detail: sqlitePath
+      ? `${sqlitePath}; relaymux DB ${relaymuxDbPath(env)}`
+      : `not found on PATH; relaymux db init/status need sqlite3; relaymux DB ${relaymuxDbPath(env)}`,
   });
 
   const legacyPath = legacyDefaultConfigPath(env);

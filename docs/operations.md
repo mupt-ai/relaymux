@@ -13,7 +13,7 @@ relaymux uninstall-launch-agent
 rm -rf ~/.local/lib/relaymux ~/.local/bin/relaymux
 ```
 
-Optionally remove local state and config after checking for data you want to keep:
+Optionally remove local state, config, and the relaymux SQLite database after checking for data you want to keep:
 
 ```bash
 rm -rf ~/.relaymux
@@ -114,6 +114,17 @@ If the notify token has loose permissions:
 chmod 600 ~/.relaymux/state/webhook-token
 relaymux doctor
 ```
+
+If you want to initialize or inspect the first-party SQLite store:
+
+```bash
+relaymux db path
+relaymux db init
+relaymux db status
+relaymux db schema
+```
+
+`relaymux db init` and live DB status checks require the system `sqlite3` CLI. `relaymux doctor` reports whether it is available, but missing SQLite is warning-only unless you run a DB command.
 
 For a no-adapter smoke test from a clone:
 
