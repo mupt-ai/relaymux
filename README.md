@@ -6,8 +6,6 @@ Telegram is the remote control / orchestrator; `tmux` tabs are where the actual 
 
 When relaymux launches an agent, it opens a visible `tmux` tab on your machine so you can attach, watch, interrupt, or debug the run like any normal terminal session.
 
-Telegram is the main supported interface.
-
 ## Requirements
 
 You need Node.js 20+, npm, `tmux`, and a local agent CLI such as `pi`, `codex`, or `claude`. 
@@ -20,7 +18,7 @@ SQLite support uses the system `sqlite3` CLI for `relaymux db` commands; normal 
 curl -fsSL https://raw.githubusercontent.com/mupt-ai/relaymux/main/install.sh | bash
 ```
 
-## Set up Telegram
+## Quickstart
 
 Create a bot with [BotFather](https://t.me/BotFather), copy the token, then run:
 
@@ -35,8 +33,6 @@ Check it:
 ```bash
 relaymux status
 ```
-
-## Use it
 
 Send your Telegram bot a message like:
 
