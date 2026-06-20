@@ -452,6 +452,9 @@ function handleLaunch(flags, configInfo, stateDir, io) {
   const runId = flags.runId || makeRunId();
   const { repo, workdir, worktreeAddArgs } = resolveRepoAndWorkdir(flags);
   const name = sanitizeExecutionName(flags.name || `${agent.requestedAgent}-${path.basename(workdir)}-${runId.slice(-6)}`);
+  if (flags.mode !== undefined) {
+    throw new Error("Use --executor local-tmux, local-background, or cloud-sandbox; --mode is not supported for launch.");
+  }
   const executor = resolveExecutorName({ flags, config });
   const sessionInfo = executor === "local-tmux"
     ? resolveLaunchSession({
@@ -968,7 +971,6 @@ Migration options:
 Launch options:
   --prompt-file <path>       Read prompt from a file
   --executor <backend>       local-tmux (default), local-background, or cloud-sandbox
-  --mode <backend>           Alias for --executor
   --group <name>             Group this run; local-tmux uses it as the tmux session when --session is omitted
   --session <name>           Explicitly launch this agent into a separate/named tmux session
   --session-mode <mode>      shared (default) or per-worktree

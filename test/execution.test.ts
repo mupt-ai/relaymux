@@ -63,20 +63,50 @@ async function waitFor(predicate, timeoutMs = 3000) {
   assert.ok(predicate(), "condition did not become true before timeout");
 }
 
-test("cc agent alias resolves to configured Claude Code agent", () => {
+test("agent names resolve exactly from config", () => {
   const config = defaultConfig();
 
-  const resolved = resolveAgentConfig(config, "cc");
+  const resolved = resolveAgentConfig(config, "claude");
 
   assert.equal(resolved.agentName, "claude");
-  assert.equal(resolved.requestedAgent, "cc");
+  assert.equal(resolved.requestedAgent, "claude");
   assert.deepEqual(resolved.agentConfig.command, config.agents.claude.command);
+  assert.throws(() => resolveAgentConfig(config, "cc"), /Unknown agent "cc"/);
 });
 
-test("executor aliases normalize to canonical backends", () => {
-  assert.equal(resolveExecutorName({ flags: { mode: "tmux" } }), "local-tmux");
-  assert.equal(resolveExecutorName({ flags: { executor: "background" } }), "local-background");
-  assert.equal(resolveExecutorName({ flags: { mode: "cloud" } }), "cloud-sandbox");
+test("executor names require canonical backends", () => {
+  assert.equal(resolveExecutorName({ flags: { executor: "local-tmux" } }), "local-tmux");
+  assert.equal(resolveExecutorName({ flags: { executor: "local-background" } }), "local-background");
+  assert.equal(resolveExecutorName({ flags: { executor: "cloud-sandbox" } }), "cloud-sandbox");
+  assert.throws(() => resolveExecutorName({ flags: { executor: "background" } }), /Invalid executor "background"/);
+});
+
+test("launch rejects --mode for executor selection", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-mode-"));
+  const configPath = path.join(root, "config.json");
+  writeConfig(configPath, {
+    ...defaultConfig({ RELAYMUX_HOME: path.join(root, "home") }),
+    stateDir: path.join(root, "state"),
+  });
+  const harness = makeIo();
+
+  const code = await main([
+    "--config",
+    configPath,
+    "launch",
+    "--repo",
+    root,
+    "--agent",
+    "custom",
+    "--prompt",
+    "noop",
+    "--mode",
+    "local-background",
+    "--dry-run",
+  ], harness.io);
+
+  assert.equal(code, 1);
+  assert.match(harness.stderr, /--mode is not supported/);
 });
 
 test("local background backend detaches, writes logs, and records lifecycle events", async () => {

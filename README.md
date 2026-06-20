@@ -67,11 +67,11 @@ relaymux launch \
   --executor local-tmux
 ```
 
-`--mode` is accepted as an alias for `--executor`. Valid executors are `local-tmux`, `local-background`, and `cloud-sandbox`.
+Valid `--executor` values are `local-tmux`, `local-background`, and `cloud-sandbox`.
 
 `--group <name>` groups runs. For `local-tmux`, the group becomes the tmux session when `--session` is not provided. Existing `--session` and `--session-mode shared|per-worktree` behavior remains supported.
 
-Agent names are resolved from `config.agents`. Defaults include `pi`, `codex`, `claude`, and `custom`; `cc` aliases to `claude` unless you define an explicit `agents.cc` entry.
+Agent names are resolved exactly from `config.agents`; use names like `claude` or `codex` directly.
 
 ## local-tmux
 
