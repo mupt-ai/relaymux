@@ -68,6 +68,14 @@ export function defaultConfig(env = process.env) {
       sessionPrefix: "rmx",
       extraWindows: [],
     },
+    execution: {
+      defaultExecutor: "local-tmux",
+      cloudSandbox: {
+        provider: "",
+        command: [],
+        env: {},
+      },
+    },
     launchNotifications: {
       onExit: "never",
       replyMode: "none",

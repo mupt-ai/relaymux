@@ -20,6 +20,8 @@ test("writeDefaultConfig creates a loadable config", () => {
   assert.equal(config.daemon.host, "127.0.0.1");
   assert.equal(config.daemon.launchMode, "direct");
   assert.equal(config.tmux.sessionMode, "shared");
+  assert.equal(config.execution.defaultExecutor, "local-tmux");
+  assert.equal(config.execution.cloudSandbox.provider, "");
   assert.ok(config.orchestrator.command);
   assert.equal(config.orchestrator.defaultSystemPrompt, true);
   assert.equal(config.orchestrator.systemPromptFile, "");
@@ -112,6 +114,7 @@ test("loadConfig merges user agents with defaults", () => {
 
   const { config } = loadConfig({ configPath });
   assert.equal(config.session, "review");
+  assert.equal(config.execution.defaultExecutor, "local-tmux");
   assert.ok(config.agents.codex);
   assert.deepEqual(config.agents.local.command, ["local-agent"]);
 });

@@ -14,6 +14,8 @@ const WINDOW_FORMAT = [
   "#{@relaymux_repo}",
   "#{@relaymux_name}",
   "#{@relaymux_started}",
+  "#{@relaymux_executor}",
+  "#{@relaymux_group}",
 ].join(WINDOW_FIELD_SEPARATOR);
 
 export function validateSessionName(session) {
@@ -124,6 +126,8 @@ function parseWindowLine(line) {
     repo,
     name,
     started,
+    executor,
+    group,
   ] = line.split(WINDOW_FIELD_SEPARATOR);
 
   return {
@@ -139,6 +143,8 @@ function parseWindowLine(line) {
     repo,
     name,
     started,
+    executor,
+    group,
     target: `${session}:${windowIndex}`,
   };
 }
