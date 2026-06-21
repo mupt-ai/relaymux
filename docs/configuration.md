@@ -7,7 +7,6 @@ relaymux stores private config, run records, prompts, logs, and local API token 
 ```text
 ~/.relaymux/
   AGENTS.md       # primary local orchestrator instructions when present
-  SOUL.md         # optional local personality notes when present
   config.json     # private config, written mode 0600
   relaymux.sqlite3 # first-party relaymux SQLite database
   state/          # run records, prompts, scripts, schedules, daemon state, local API token
@@ -65,7 +64,6 @@ Command arrays are argv templates. `{prompt}` and `{promptFile}` are substituted
     "promptMode": "arg",
     "defaultSystemPrompt": true,
     "systemPromptFile": "",
-    "personalityPromptFile": "",
     "extraSystemPrompt": ""
   },
   "agents": {
@@ -90,8 +88,6 @@ Inline handling is meant only for truly tiny replies, lightweight read-only insp
 
 Your relaymux home owns local orchestrator instructions. By default, relaymux appends `<relaymux home>/AGENTS.md` when that file exists; set `orchestrator.systemPromptFile` only when you want an explicit configured instructions file instead of the home `AGENTS.md`. relaymux never reads Pi's global `AGENTS.md` under `~/.pi/agent` for orchestrator instructions.
 
-`<relaymux home>/SOUL.md` is optional personality material. It is appended only when present, or when `orchestrator.personalityPromptFile` points to an explicit file. `AGENTS.md` can mention or include `SOUL.md`, but relaymux does not create or require `SOUL.md`.
-
 Your config owns local details: adapter tokens and chat IDs, exact agent CLI commands, local working directories, session names, private preferences, and repo-specific overrides. `orchestrator.extraSystemPrompt` remains an additive escape hatch for short local preferences. Set `orchestrator.defaultSystemPrompt` to `false` only if you want to remove relaymux's built-in orchestration baseline.
 
 Example local override:
@@ -101,7 +97,6 @@ Example local override:
   "orchestrator": {
     "defaultSystemPrompt": true,
     "systemPromptFile": "~/.relaymux/AGENTS.md",
-    "personalityPromptFile": "~/.relaymux/SOUL.md",
     "extraSystemPrompt": "Use the custom agent first for documentation-only requests."
   }
 }

@@ -25,7 +25,7 @@ relaymux ask "Open an agent in ~/code/my-app to inspect the failing test."
 
 `relaymux ask` requires the relaymux daemon to be running. `relaymux setup` installs the daemon as a per-user LaunchAgent on macOS or a systemd user service on Linux, and `relaymux restart-launch-agent` reloads it after config changes (the command name is kept for CLI compatibility).
 
-Every local API, adapter, and scheduled request is wrapped with relaymux's built-in orchestration baseline unless `orchestrator.defaultSystemPrompt` is set to `false`. relaymux then appends `<relaymux home>/AGENTS.md` when present, or `orchestrator.systemPromptFile` when configured, and optional personality notes from `<relaymux home>/SOUL.md` or `orchestrator.personalityPromptFile`.
+Every local API, adapter, and scheduled request is wrapped with relaymux's built-in orchestration baseline unless `orchestrator.defaultSystemPrompt` is set to `false`. relaymux then appends `<relaymux home>/AGENTS.md` when present, or `orchestrator.systemPromptFile` when configured.
 
 Those defaults bias the orchestrator toward launching visible relaymux subagents for repo changes, debugging, research, CI, docs, validation, and other work that may take more than about 10 seconds.
 

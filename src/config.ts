@@ -102,7 +102,6 @@ export function defaultConfig(env = process.env) {
       maxBufferBytes: 10 * 1024 * 1024,
       defaultSystemPrompt: true,
       systemPromptFile: "",
-      personalityPromptFile: "",
       extraSystemPrompt: "",
     },
     agents: {
