@@ -23,6 +23,7 @@ test("writeDefaultConfig creates a loadable config", () => {
   assert.ok(config.orchestrator.command);
   assert.equal(config.orchestrator.defaultSystemPrompt, true);
   assert.equal(config.orchestrator.systemPromptFile, "");
+  assert.equal(Object.prototype.hasOwnProperty.call(config.orchestrator, "personalityPromptFile"), false);
   assert.equal(config.orchestrator.extraSystemPrompt, "");
   assert.ok(config.agents.codex);
   assert.equal(config.agents.codex.command.includes("--reasoning-effort"), false);
@@ -30,6 +31,12 @@ test("writeDefaultConfig creates a loadable config", () => {
   const written = fs.readFileSync(configPath, "utf8");
   assert.doesNotMatch(written, /You are a local relaymux orchestrator/);
   assert.doesNotMatch(written, /SOUL\.md/);
+});
+
+test("public docs do not mention SOUL.md", () => {
+  for (const file of ["README.md", "docs/README.md", "docs/configuration.md", "docs/integrations.md", "docs/operations.md"]) {
+    assert.doesNotMatch(fs.readFileSync(file, "utf8"), /SOUL\.md/, file);
+  }
 });
 
 test("loadConfig treats legacy top-level imessage as enabled integration", () => {

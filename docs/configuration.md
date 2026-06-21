@@ -6,6 +6,7 @@ relaymux stores private config, run records, prompts, logs, and local API token 
 
 ```text
 ~/.relaymux/
+  AGENTS.md       # primary local orchestrator instructions when present
   config.json     # private config, written mode 0600
   relaymux.sqlite3 # first-party relaymux SQLite database
   state/          # run records, prompts, scripts, schedules, daemon state, local API token
@@ -81,11 +82,13 @@ An agent is a command template in `~/.relaymux/config.json`. If you configure `p
 
 The orchestrator is also a command, but it has a different job from an agent. The orchestrator handles inbound requests from `relaymux ask` or optional message adapters. Agents do delegated work launched with `relaymux launch`. The orchestrator receives incoming text plus relaymux instructions and prints a reply on stdout.
 
-relaymux owns the generic orchestrator operating instructions in the source repo. By default, every orchestrator request includes those repo-managed instructions: stay local-first, be concise, delegate work that may take more than about 10 seconds with `relaymux launch`, use the configured shared tmux session, prefer prompt files for longer delegated tasks, ask subagents to call `relaymux notify` with idempotency keys, keep quiet updates on `--reply-mode none`, use `relaymux schedule` for recurring prompts, inspect real tmux/repo/test state before claiming completion, and never put secrets in prompts, logs, PRs, or replies.
+relaymux includes a small built-in orchestration baseline by default: stay local-first, be concise, delegate work that may take more than about 10 seconds with `relaymux launch`, use the configured shared tmux session, prefer prompt files for longer delegated tasks, ask subagents to call `relaymux notify` with idempotency keys, keep quiet updates on `--reply-mode none`, use `relaymux schedule` for recurring prompts, inspect real tmux/repo/test state before claiming completion, and never put secrets in prompts, logs, PRs, or replies.
 
 Inline handling is meant only for truly tiny replies, lightweight read-only inspection, or explicit user requests to stay inline. Repo code changes, PR fixes, debugging/deploy work, deep research, CI loops, docs rewrites, long validation, and multi-file edits should normally become visible relaymux subagent runs.
 
-Your config owns local details: adapter tokens and chat IDs, exact agent CLI commands, local working directories, session names, private preferences, and repo-specific overrides. `orchestrator.systemPromptFile` and `orchestrator.extraSystemPrompt` are additive escape hatches for those local preferences; they are not required for best-practice operation. Set `orchestrator.defaultSystemPrompt` to `false` only if you want to fully replace relaymux's repo-managed orchestration guidance.
+Your relaymux home owns local orchestrator instructions. By default, relaymux appends `<relaymux home>/AGENTS.md` when that file exists; set `orchestrator.systemPromptFile` only when you want an explicit configured instructions file instead of the home `AGENTS.md`. relaymux never reads Pi's global `AGENTS.md` under `~/.pi/agent` for orchestrator instructions.
+
+Your config owns local details: adapter tokens and chat IDs, exact agent CLI commands, local working directories, session names, private preferences, and repo-specific overrides. `orchestrator.extraSystemPrompt` remains an additive escape hatch for short local preferences. Set `orchestrator.defaultSystemPrompt` to `false` only if you want to remove relaymux's built-in orchestration baseline.
 
 Example local override:
 
@@ -93,7 +96,7 @@ Example local override:
 {
   "orchestrator": {
     "defaultSystemPrompt": true,
-    "systemPromptFile": "~/.relaymux/orchestrator.local.md",
+    "systemPromptFile": "~/.relaymux/AGENTS.md",
     "extraSystemPrompt": "Use the custom agent first for documentation-only requests."
   }
 }
