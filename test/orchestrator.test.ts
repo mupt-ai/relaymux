@@ -41,11 +41,32 @@ test("orchestrator requests include repo-managed best practices by default", () 
   assert.match(prompt, /# Terminal request/);
 });
 
+test("orchestrator requests include relaymux home AGENTS.md when present", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-orchestrator-agents-"));
+  const home = path.join(dir, "home");
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, "AGENTS.md"), "Local relaymux AGENTS instructions.");
+  const config = defaultConfig({ RELAYMUX_HOME: home });
+
+  const prompt = buildTerminalOrchestratorPrompt({
+    config,
+    configPath: path.join(home, "config.json"),
+    job: terminalJob(),
+  });
+
+  assert.match(prompt, /You are a local relaymux orchestrator/);
+  assert.match(prompt, /Local relaymux AGENTS instructions/);
+  assert.ok(prompt.indexOf("You are a local relaymux orchestrator") < prompt.indexOf("Local relaymux AGENTS instructions"));
+});
+
 test("orchestrator prompt file and extra prompt remain additive", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-orchestrator-custom-"));
+  const home = path.join(dir, "home");
   const customPromptFile = path.join(dir, "custom-system-prompt.md");
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, "AGENTS.md"), "Home AGENTS prompt should not appear.");
   fs.writeFileSync(customPromptFile, "Local custom system prompt.");
-  const config = defaultConfig({ RELAYMUX_HOME: path.join(dir, "home") });
+  const config = defaultConfig({ RELAYMUX_HOME: home });
   config.orchestrator.systemPromptFile = customPromptFile;
   config.orchestrator.extraSystemPrompt = "Extra local prompt.";
 
@@ -58,8 +79,70 @@ test("orchestrator prompt file and extra prompt remain additive", () => {
   assert.match(prompt, /You are a local relaymux orchestrator/);
   assert.match(prompt, /Local custom system prompt/);
   assert.match(prompt, /Extra local prompt/);
+  assert.doesNotMatch(prompt, /Home AGENTS prompt should not appear/);
   assert.ok(prompt.indexOf("You are a local relaymux orchestrator") < prompt.indexOf("Local custom system prompt"));
   assert.ok(prompt.indexOf("Local custom system prompt") < prompt.indexOf("Extra local prompt"));
+});
+
+test("orchestrator includes SOUL.md only when present or explicitly configured", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-orchestrator-soul-"));
+  const home = path.join(dir, "home");
+  const config = defaultConfig({ RELAYMUX_HOME: home });
+
+  let prompt = buildTerminalOrchestratorPrompt({
+    config,
+    configPath: path.join(home, "config.json"),
+    job: terminalJob(),
+  });
+  assert.doesNotMatch(prompt, /Local personality prompt/);
+
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, "SOUL.md"), "Local personality prompt.");
+  prompt = buildTerminalOrchestratorPrompt({
+    config,
+    configPath: path.join(home, "config.json"),
+    job: terminalJob(),
+  });
+  assert.match(prompt, /Local personality prompt/);
+
+  const configuredSoul = path.join(dir, "configured-personality.md");
+  fs.writeFileSync(configuredSoul, "Configured personality prompt.");
+  config.orchestrator.personalityPromptFile = configuredSoul;
+  prompt = buildTerminalOrchestratorPrompt({
+    config,
+    configPath: path.join(home, "config.json"),
+    job: terminalJob(),
+  });
+  assert.match(prompt, /Configured personality prompt/);
+  assert.doesNotMatch(prompt, /Local personality prompt/);
+});
+
+test("orchestrator does not read global Pi AGENTS.md", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-orchestrator-no-pi-agents-"));
+  const home = path.join(dir, "home");
+  const userHome = path.join(dir, "user-home");
+  const piAgentDir = path.join(userHome, ".pi", "agent");
+  fs.mkdirSync(piAgentDir, { recursive: true });
+  fs.writeFileSync(path.join(piAgentDir, "AGENTS.md"), "Global Pi AGENTS marker.");
+  const config = defaultConfig({ RELAYMUX_HOME: home });
+  const oldHome = process.env.HOME;
+
+  try {
+    process.env.HOME = userHome;
+    const prompt = buildTerminalOrchestratorPrompt({
+      config,
+      configPath: path.join(home, "config.json"),
+      job: terminalJob(),
+    });
+
+    assert.doesNotMatch(prompt, /Global Pi AGENTS marker/);
+  } finally {
+    if (oldHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = oldHome;
+    }
+  }
 });
 
 test("orchestrator default system prompt can be disabled", () => {

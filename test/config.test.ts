@@ -23,6 +23,7 @@ test("writeDefaultConfig creates a loadable config", () => {
   assert.ok(config.orchestrator.command);
   assert.equal(config.orchestrator.defaultSystemPrompt, true);
   assert.equal(config.orchestrator.systemPromptFile, "");
+  assert.equal(config.orchestrator.personalityPromptFile, "");
   assert.equal(config.orchestrator.extraSystemPrompt, "");
   assert.ok(config.agents.codex);
   assert.equal(config.agents.codex.command.includes("--reasoning-effort"), false);

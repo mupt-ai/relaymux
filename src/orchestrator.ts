@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { buildAgentInvocation } from "./command.js";
 import { DEFAULT_ORCHESTRATOR_SYSTEM_PROMPT, buildRuntimePromptContext } from "./prompt.js";
 import { resolveStateDir, resolveTokenFile } from "./config.js";
-import { defaultRelaymuxHome, expandPath, ensureDirectory, readTextFile } from "./paths.js";
+import { defaultRelaymuxHome, expandPath, ensureDirectory, pathExists, readTextFile } from "./paths.js";
 import { runCommandAsync } from "./async-process.js";
 
 export function buildIncomingOrchestratorPrompt({ config, configPath, incomingText }) {
@@ -52,9 +52,11 @@ export function buildTerminalOrchestratorPrompt({ config, configPath, job }) {
 
 export function buildFullPrompt({ config, configPath, title, body }) {
   const daemon = config.daemon || {};
+  const homeDir = resolveRelaymuxHome(config);
   const system = [
     config.orchestrator?.defaultSystemPrompt === false ? "" : DEFAULT_ORCHESTRATOR_SYSTEM_PROMPT,
-    readOptionalPromptFile(config.orchestrator?.systemPromptFile),
+    readInstructionsPromptFile(config.orchestrator?.systemPromptFile, homeDir),
+    readPersonalityPromptFile(config.orchestrator?.personalityPromptFile, homeDir),
     config.orchestrator?.extraSystemPrompt,
   ].filter((part) => String(part || "").trim()).join("\n\n");
   const host = formatHostForUrl(daemon.host || "127.0.0.1");
@@ -63,7 +65,7 @@ export function buildFullPrompt({ config, configPath, title, body }) {
     configPath,
     session: config.session || "agents",
     sessionMode: config.tmux?.sessionMode || "shared",
-    homeDir: defaultRelaymuxHome(),
+    homeDir,
     stateDir: resolveStateDir(config),
     tokenFile: resolveTokenFile(config),
     webhookUrl,
@@ -128,9 +130,31 @@ function writeOrchestratorPrompt(stateDir, requestId, prompt) {
   return file;
 }
 
-function readOptionalPromptFile(file) {
+function readInstructionsPromptFile(file, homeDir) {
+  if (file) return readRequiredPromptFile(file);
+  return readExistingPromptFile(path.join(homeDir, "AGENTS.md"));
+}
+
+function readPersonalityPromptFile(file, homeDir) {
+  if (file) return readRequiredPromptFile(file);
+  return readExistingPromptFile(path.join(homeDir, "SOUL.md"));
+}
+
+function readRequiredPromptFile(file) {
   if (!file) return "";
   return readTextFile(expandPath(file));
+}
+
+function readExistingPromptFile(file) {
+  return pathExists(file) ? readTextFile(file) : "";
+}
+
+function resolveRelaymuxHome(config) {
+  const stateDir = resolveStateDir(config);
+  if (path.basename(stateDir) === "state") {
+    return path.dirname(stateDir);
+  }
+  return defaultRelaymuxHome();
 }
 
 function sanitizeFilePart(value) {
