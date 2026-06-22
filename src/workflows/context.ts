@@ -58,7 +58,8 @@ export class WorkflowContext {
     }
 
     const description = runnable.describe();
-    const inputDigest = hashJson(description);
+    const digestInput = typeof runnable.digest === "function" ? runnable.digest() : description;
+    const inputDigest = hashJson(digestInput);
     const stepDir = path.join(this.runDir, "steps", safePathSegment(displayStepId, "step"));
     const previous = readJsonFile(path.join(stepDir, "step.json"));
     if (previous?.status === "succeeded" && previous.inputDigest === inputDigest && previous.resultPath) {

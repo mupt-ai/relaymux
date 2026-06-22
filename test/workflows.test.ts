@@ -174,3 +174,38 @@ export default defineWorkflow({
   assert.equal(await main(["workflow", "list", "--json"], listHarness.io), 0);
   assert.equal(JSON.parse(listHarness.stdout).runs.length, 1);
 });
+
+test("workflow shell redacts sensitive env and argv in persisted status", async () => {
+  const root = tempRoot("redaction");
+  const home = path.join(root, "home");
+  const workflowFile = writeWorkflow(root, "redaction.ts", `
+import { defineWorkflow, shell } from "@relaymux/workflows";
+
+export default defineWorkflow({
+  async run(ctx) {
+    const result = await ctx.step("secret-env", shell({
+      argv: [process.execPath, "-e", "process.stdout.write(process.env.SECRET_TOKEN ? 'secret-present' : 'missing')"],
+      env: { SECRET_TOKEN: "super-secret-value" },
+    }));
+    return { stdout: result.data.stdoutSnippet, argv: result.data.argv };
+  },
+});
+`);
+  const runHarness = makeIo({ RELAYMUX_HOME: home });
+
+  const code = await main(["workflow", "run", workflowFile, "--name", "redaction", "--json"], runHarness.io);
+
+  assert.equal(code, 0, runHarness.stderr);
+  const outcome = JSON.parse(runHarness.stdout);
+  assert.equal(outcome.result.stdout, "secret-present");
+  assert.doesNotMatch(JSON.stringify(outcome), /super-secret-value/);
+  assert.deepEqual(outcome.result.argv, [process.execPath, "-e", "<redacted>"]);
+
+  const statusHarness = makeIo({ RELAYMUX_HOME: home });
+  assert.equal(await main(["workflow", "status", outcome.run.workflowRunId, "--events", "--json"], statusHarness.io), 0);
+  const status = JSON.parse(statusHarness.stdout);
+  assert.doesNotMatch(JSON.stringify(status), /super-secret-value/);
+  const started = status.events.find((event) => event.event === "step_started");
+  assert.deepEqual(started.description.argv, [process.execPath, "-e", "<redacted>"]);
+  assert.equal(started.description.env.SECRET_TOKEN, "<redacted>");
+});

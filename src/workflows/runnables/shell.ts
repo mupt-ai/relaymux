@@ -16,9 +16,19 @@ export function shell(options: any = {}) {
     describe() {
       return {
         kind: "shell",
-        argv: normalized.argv,
+        argv: safeArgvDescription(normalized.argv),
         cwd: normalized.cwd || "",
         env: safeEnvDescription(normalized.env),
+        timeoutMs: normalized.timeoutMs || 0,
+        allowFailure: normalized.allowFailure,
+      };
+    },
+    digest() {
+      return {
+        kind: "shell",
+        argv: normalized.argv,
+        cwd: normalized.cwd || "",
+        env: normalized.env,
         timeoutMs: normalized.timeoutMs || 0,
         allowFailure: normalized.allowFailure,
       };
@@ -105,7 +115,7 @@ async function executeShell(options, context) {
     startedAt,
     endedAt,
     data: {
-      argv: options.argv,
+      argv: safeArgvDescription(options.argv),
       cwd,
       exitCode: completion.exitCode,
       signal: completion.signal,
@@ -167,6 +177,49 @@ function safeEnvDescription(env) {
     result[key] = SENSITIVE_ENV_KEY.test(key) ? "<redacted>" : "<set>";
   }
   return result;
+}
+
+function safeArgvDescription(argv) {
+  const safe: string[] = [];
+  let redactNext = false;
+  for (const raw of argv || []) {
+    const value = String(raw);
+    if (redactNext) {
+      safe.push("<redacted>");
+      redactNext = false;
+      continue;
+    }
+
+    const assignment = value.match(/^([A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD|AUTH|COOKIE|CREDENTIAL)[A-Za-z0-9_]*)=(.*)$/i);
+    if (assignment) {
+      safe.push(`${assignment[1]}=<redacted>`);
+      continue;
+    }
+
+    const flagWithValue = value.match(/^(--?[A-Za-z0-9_.-]*(?:token|secret|key|password|auth|cookie|credential)[A-Za-z0-9_.-]*)=(.*)$/i);
+    if (flagWithValue) {
+      safe.push(`${flagWithValue[1]}=<redacted>`);
+      continue;
+    }
+
+    if (/^--?[A-Za-z0-9_.-]*(?:token|secret|key|password|auth|cookie|credential)[A-Za-z0-9_.-]*$/i.test(value)) {
+      safe.push(value);
+      redactNext = true;
+      continue;
+    }
+
+    if (SENSITIVE_ENV_KEY.test(value)) {
+      safe.push("<redacted>");
+      continue;
+    }
+
+    safe.push(redactUrlCredentials(value));
+  }
+  return safe;
+}
+
+function redactUrlCredentials(value) {
+  return value.replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/@\s:]+):([^/@\s]+)@/g, "$1<redacted>@");
 }
 
 function resolveCwd(cwd, baseCwd) {
