@@ -5,6 +5,7 @@ const BOOLEAN_FLAGS = new Set([
   "attach",
   "create-worktree",
   "dry-run",
+  "events",
   "force",
   "help",
   "history",

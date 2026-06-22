@@ -127,6 +127,58 @@ Config shape:
 }
 ```
 
+## TypeScript workflows
+
+`relaymux workflow` is the first focused workflow runner. It runs in the foreground, loads a local `.ts` or `.js` workflow file, and persists workflow state under:
+
+```text
+<stateDir>/workflows/<workflowRunId>/
+```
+
+Run the example workflow:
+
+```bash
+relaymux workflow run examples/workflows/shell-smoke.ts \
+  --name shell-smoke \
+  --input-json '{"message":"hello workflow"}'
+```
+
+Inspect it later:
+
+```bash
+relaymux workflow list
+relaymux workflow status <workflowRunId> --events
+```
+
+JSON output is available for automation:
+
+```bash
+relaymux workflow run ./workflow.ts --name quality-gate --json
+relaymux workflow status <workflowRunId> --events --json
+relaymux workflow list --json
+```
+
+Workflow files run through `relaymux workflow run` can import the SDK facade from `@relaymux/workflows`:
+
+```ts
+import { defineWorkflow, shell } from "@relaymux/workflows";
+
+export default defineWorkflow({
+  async run(ctx, input: { repo: string }) {
+    const tests = await ctx.step("tests", shell({
+      argv: ["npm", "run", "validate"],
+      cwd: input.repo,
+      timeoutMs: 20 * 60 * 1000,
+    }));
+    return { ok: tests.ok };
+  },
+});
+```
+
+The MVP deliberately supports only foreground workflow runs and the `shell({ argv, cwd?, env?, timeoutMs?, allowFailure? })` runnable. It records `workflow_started`, step lifecycle, artifact, and terminal workflow events. Shell stdout/stderr snippets are bounded in events/results, while full stdout/stderr logs are written as artifacts under the workflow run directory. Reusing `--idempotency-key <key>` with the same workflow name reports the existing run instead of starting a duplicate.
+
+Unsupported workflow-platform features such as background workflow supervision, agent loops, approvals, retries, HTTP steps, and cancellation are not implemented yet.
+
 ## Launch an agent manually
 
 ```bash
