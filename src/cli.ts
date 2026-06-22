@@ -27,6 +27,7 @@ import { makeRunId, sanitizeExecutionName } from "./execution/names.js";
 import { resolveLaunchNotification } from "./execution/notifications.js";
 import { resolveExecutionGroup, resolveExecutorName } from "./execution/selection.js";
 import { handleExecutionStatus } from "./execution/status.js";
+import { handleWorkflowCommand } from "./workflows/cli.js";
 
 export async function main(argv, io = defaultIo()) {
   try {
@@ -61,6 +62,13 @@ export async function main(argv, io = defaultIo()) {
         return handleLaunch(parsed.flags, configInfo, stateDir, io);
       case "status":
         return handleExecutionStatus(parsed.flags, configInfo, stateDir, io, platform);
+      case "workflow":
+        return await handleWorkflowCommand({
+          flags: parsed.flags,
+          positionals: parsed.positionals,
+          stateDir,
+          io,
+        });
       case "notify":
         await handleNotify({
           flags: parsed.flags,
@@ -935,6 +943,9 @@ Usage:
   relaymux status-launch-agent [--json]
   relaymux uninstall-launch-agent
   relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>] [--executor local-tmux|local-background|cloud-sandbox] [--group <name>] [--notify-on-exit never|failure|always]
+  relaymux workflow run <file> --name <name> [--input-json <json>] [--input-file <path>] [--idempotency-key <key>] [--json]
+  relaymux workflow status [workflowRunId] [--json] [--events]
+  relaymux workflow list [--json]
   relaymux ask <text> [--no-wait] [--reply-mode imessage|telegram|none]
   relaymux schedule add --name <name> --prompt <text> --cron "0 9 * * *" [--reply-mode none|imessage|telegram] [--scheduler auto|launchd|cron]
   relaymux schedule list|remove [--name <name>]
