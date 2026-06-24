@@ -3,10 +3,10 @@ import { recordRun } from "../state.js";
 
 import { prepareLaunchArtifacts } from "./artifacts.js";
 
-export function launchLocalTmux(request) {
+export function launchTmuxAgent(request) {
   const sessionInfo = request.sessionInfo;
   if (!sessionInfo?.session) {
-    throw new Error("local-tmux executor requires a resolved tmux session");
+    throw new Error("tmux launch requires a resolved session");
   }
 
   const artifacts = prepareLaunchArtifacts(request, { writeFiles: !request.dryRun });
@@ -19,7 +19,7 @@ export function launchLocalTmux(request) {
     request.io.stdout.write(`${artifacts.shellCommand}\n`);
     request.io.stdout.write("\n# wrapper script\n");
     request.io.stdout.write(`${artifacts.script}\n`);
-    return { executor: "local-tmux", dryRun: true, ...artifacts };
+    return { dryRun: true, ...artifacts };
   }
 
   if (request.printCommand) {
@@ -36,9 +36,6 @@ export function launchLocalTmux(request) {
   setWindowMetadata(target.windowTarget, {
     relaymux: "1",
     relaymux_agent: request.agentName,
-    relaymux_agent_requested: request.requestedAgent,
-    relaymux_executor: "local-tmux",
-    relaymux_group: request.group,
     relaymux_name: request.name,
     relaymux_repo: request.repo,
     relaymux_run_id: request.runId,
@@ -51,8 +48,6 @@ export function launchLocalTmux(request) {
   recordRun(request.stateDir, {
     time: started,
     runId: request.runId,
-    executor: "local-tmux",
-    group: request.group,
     session: sessionInfo.session,
     sessionMode: sessionInfo.mode,
     sessionSource: sessionInfo.source,
@@ -60,7 +55,6 @@ export function launchLocalTmux(request) {
     windowTarget: target.windowTarget,
     name: request.name,
     agent: request.agentName,
-    requestedAgent: request.requestedAgent,
     repo: request.repo,
     workdir: request.workdir,
     promptFile: artifacts.promptFile,
@@ -73,5 +67,5 @@ export function launchLocalTmux(request) {
   if (request.attach) {
     request.io.stdout.write(`Attach with: tmux attach -t ${sessionInfo.session}\n`);
   }
-  return { executor: "local-tmux", target, ...artifacts };
+  return { target, ...artifacts };
 }

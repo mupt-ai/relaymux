@@ -3,16 +3,16 @@ import path from "node:path";
 import { buildAgentInvocation, buildTmuxShellCommand, buildTmuxShellScript } from "../command.js";
 import { writePromptFile, writeScriptFile } from "../state.js";
 
-export function buildExecutionShellScript(agentName, agentConfig, context) {
+function buildLaunchShellScript(agentName, agentConfig, context) {
   const invocation = buildAgentInvocation(agentName, agentConfig, context);
   return buildTmuxShellScript(invocation, context);
 }
 
-export function prepareLaunchArtifacts(request, { writeFiles = true }: any = {}) {
+export function prepareLaunchArtifacts(request, { writeFiles = true } = {}) {
   const promptFile = writeFiles
     ? writePromptFile(request.stateDir, request.runId, request.prompt)
     : path.join(request.stateDir, "prompts", `${request.runId}.txt`);
-  const script = buildExecutionShellScript(request.agentName, request.agentConfig, {
+  const script = buildLaunchShellScript(request.agentName, request.agentConfig, {
     agent: request.agentName,
     cliPath: request.cliPath,
     configPath: request.configPath,
@@ -23,7 +23,7 @@ export function prepareLaunchArtifacts(request, { writeFiles = true }: any = {})
     promptFile,
     repo: request.repo,
     runId: request.runId,
-    session: request.session || request.group || "",
+    session: request.session || "",
     workdir: request.workdir,
   });
   const scriptFile = writeFiles

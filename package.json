@@ -1,7 +1,7 @@
 {
   "name": "relaymux",
   "version": "0.1.0",
-  "description": "Coordinate CLI agents across local tmux, local background, and cloud-sandbox execution backends.",
+  "description": "Coordinate local CLI agents in tmux with a local API and optional notification adapters.",
   "type": "module",
   "scripts": {
     "build": "tsc && node -e \"require('fs').chmodSync('dist/bin/relaymux.js', 0o755)\"",

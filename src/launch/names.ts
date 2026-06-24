@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-export function sanitizeExecutionName(value) {
+export function sanitizeLaunchName(value) {
   return String(value)
     .trim()
     .replace(/[^A-Za-z0-9_.-]+/g, "-")
