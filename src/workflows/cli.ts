@@ -202,5 +202,6 @@ Usage:
 Notes:
   Workflows run in the foreground for this MVP and persist state under <stateDir>/workflows/<workflowRunId>.
   Workflow files may import defineWorkflow and shell from @relaymux/workflows when run through relaymux workflow run.
+  workflow status without a workflowRunId is an interactive alias for workflow list; --events requires a workflowRunId.
 `;
 }

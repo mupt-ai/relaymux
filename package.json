@@ -3,6 +3,17 @@
   "version": "0.1.0",
   "description": "Coordinate CLI agents across local tmux, local background, and cloud-sandbox execution backends.",
   "type": "module",
+  "types": "./dist/src/workflows/index.d.ts",
+  "bin": {
+    "relaymux": "./dist/bin/relaymux.js"
+  },
+  "exports": {
+    "./workflows": {
+      "types": "./dist/src/workflows/index.d.ts",
+      "import": "./dist/src/workflows/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "build": "tsc && node -e \"require('fs').chmodSync('dist/bin/relaymux.js', 0o755)\"",
     "lint": "tsc --noEmit",

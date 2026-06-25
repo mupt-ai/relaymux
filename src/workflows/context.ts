@@ -13,11 +13,43 @@ import {
   writeJsonFile,
 } from "./state.js";
 
+export type WorkflowErrorSummary = {
+  name: string;
+  message: string;
+};
+
+export type RunnableExecutionContext = {
+  workflowRunId: string;
+  runDir: string;
+  stepId: string;
+  attempt: number;
+  attemptDir: string;
+  cwd: string;
+};
+
+export type RunnableResult<TData = unknown> = {
+  ok: boolean;
+  status: string;
+  startedAt: string;
+  endedAt: string;
+  data: TData;
+  artifacts: Record<string, string>;
+  error?: WorkflowErrorSummary | null;
+};
+
+export type Runnable<TData = unknown> = {
+  kind: string;
+  allowFailure?: boolean;
+  describe(): unknown;
+  digest?(): unknown;
+  execute(context: RunnableExecutionContext): Promise<RunnableResult<TData>> | RunnableResult<TData>;
+};
+
 export class WorkflowStepError extends Error {
-  result: any;
+  result: RunnableResult;
   stepId: string;
 
-  constructor(stepId, result) {
+  constructor(stepId: string, result: RunnableResult) {
     super(`Workflow step "${stepId}" failed with status ${result.status || "failed"}`);
     this.name = "WorkflowStepError";
     this.stepId = stepId;
@@ -25,17 +57,19 @@ export class WorkflowStepError extends Error {
   }
 }
 
-export class WorkflowContext {
+export class WorkflowContext<TInput = unknown> {
   stateDir: string;
   run: any;
-  input: any;
+  input: TInput;
   cwd: string;
+  private seenStepIds: Set<string>;
 
   constructor({ stateDir, run, input, cwd }: any) {
     this.stateDir = stateDir;
     this.run = run;
     this.input = input;
     this.cwd = cwd || process.cwd();
+    this.seenStepIds = new Set();
   }
 
   get workflowRunId() {
@@ -50,23 +84,22 @@ export class WorkflowContext {
     return this.run.name;
   }
 
-  async step(stepId, runnable) {
+  async step<TData = unknown>(stepId: string, runnable: Runnable<TData>): Promise<RunnableResult<TData>> {
     validateRunnable(runnable);
     const displayStepId = String(stepId || "").trim();
     if (!displayStepId) {
       throw new Error("ctx.step(stepId, runnable) requires a non-empty stepId");
     }
+    if (this.seenStepIds.has(displayStepId)) {
+      throw new Error(`Duplicate workflow step id "${displayStepId}" in run ${this.workflowRunId}`);
+    }
+    this.seenStepIds.add(displayStepId);
 
     const description = runnable.describe();
     const digestInput = typeof runnable.digest === "function" ? runnable.digest() : description;
     const inputDigest = hashJson(digestInput);
     const stepDir = path.join(this.runDir, "steps", safePathSegment(displayStepId, "step"));
     const previous = readJsonFile(path.join(stepDir, "step.json"));
-    if (previous?.status === "succeeded" && previous.inputDigest === inputDigest && previous.resultPath) {
-      const cached = readJsonFile(previous.resultPath);
-      if (cached) return cached;
-    }
-
     const attempt = Number(previous?.attempt || 0) + 1;
     const attemptDir = path.join(stepDir, "attempts", String(attempt));
     ensureDirectory(attemptDir);
@@ -152,14 +185,14 @@ export class WorkflowContext {
     }
   }
 
-  emit(event, data: any = {}) {
+  emit(event: string, data: any = {}) {
     return appendWorkflowEvent(this.stateDir, this.workflowRunId, {
       event: String(event || "workflow_event"),
       data,
     });
   }
 
-  artifact(name, content) {
+  artifact(name: string, content: unknown) {
     const file = path.join(this.runDir, "artifacts", safePathSegment(name, "artifact"));
     ensureDirectory(path.dirname(file));
     if (Buffer.isBuffer(content) || typeof content === "string") {
@@ -181,7 +214,7 @@ export class WorkflowContext {
   }
 }
 
-function validateRunnable(runnable) {
+function validateRunnable(runnable: Runnable<unknown>) {
   if (!runnable || typeof runnable !== "object") {
     throw new Error("ctx.step requires a runnable object");
   }

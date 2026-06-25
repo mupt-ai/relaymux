@@ -5,17 +5,64 @@ import path from "node:path";
 import { ensureDirectory } from "../paths.js";
 
 export const WORKFLOW_TERMINAL_STATUSES = new Set(["succeeded", "failed", "timed_out", "canceled"]);
+export const WORKFLOW_RETRYABLE_TERMINAL_STATUSES = new Set(["failed", "timed_out", "canceled"]);
+export const WORKFLOW_RUN_ID_PATTERN = /^wf-[a-z0-9]+-[a-f0-9]{8}$/;
+
+export class WorkflowIdempotencyConflictError extends Error {
+  constructor({ name, existingRun, requested }: any) {
+    const existingRunId = existingRun?.workflowRunId ? ` Existing run: ${existingRun.workflowRunId}.` : "";
+    super(
+      `Idempotency conflict for workflow "${name}": this key was already used with a different workflow definition or input.${existingRunId} Use the original definition/input or a different --idempotency-key.`,
+    );
+    this.name = "WorkflowIdempotencyConflictError";
+    (this as any).existingRun = existingRun || null;
+    (this as any).requested = requested;
+  }
+}
 
 export function makeWorkflowRunId() {
-  return `wf-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+  const workflowRunId = `wf-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+  validateWorkflowRunId(workflowRunId);
+  return workflowRunId;
 }
 
 export function workflowsDir(stateDir) {
   return path.join(stateDir, "workflows");
 }
 
+export function validateWorkflowRunId(workflowRunId) {
+  const value = String(workflowRunId || "");
+  if (
+    !value ||
+    value === "." ||
+    value === ".." ||
+    value.includes("/") ||
+    value.includes("\\") ||
+    !WORKFLOW_RUN_ID_PATTERN.test(value)
+  ) {
+    throw new Error(`Invalid workflow run id ${JSON.stringify(value)}; expected wf-<base36time>-<hex8>`);
+  }
+  return value;
+}
+
+export function isWorkflowRunId(value) {
+  if (typeof value !== "string") return false;
+  if (!value || value === "." || value === ".." || value.includes("/") || value.includes("\\")) return false;
+  return WORKFLOW_RUN_ID_PATTERN.test(value);
+}
+
+export function resolveWorkflowRunDir(stateDir, workflowRunId) {
+  const runId = validateWorkflowRunId(workflowRunId);
+  const root = path.resolve(workflowsDir(stateDir));
+  const resolved = path.resolve(root, runId);
+  if (!isPathInside(root, resolved)) {
+    throw new Error(`Invalid workflow run id ${JSON.stringify(runId)}; resolved outside workflow state`);
+  }
+  return resolved;
+}
+
 export function workflowRunDir(stateDir, workflowRunId) {
-  return path.join(workflowsDir(stateDir), workflowRunId);
+  return resolveWorkflowRunDir(stateDir, workflowRunId);
 }
 
 export function createWorkflowRun({
@@ -24,9 +71,11 @@ export function createWorkflowRun({
   name,
   definitionFile,
   definitionHash,
+  inputHash,
   input,
   idempotencyKey = "",
 }: any) {
+  validateWorkflowRunId(workflowRunId);
   const startedAt = new Date().toISOString();
   const runDir = workflowRunDir(stateDir, workflowRunId);
   ensureDirectory(runDir);
@@ -39,7 +88,7 @@ export function createWorkflowRun({
     name,
     definitionFile,
     definitionHash,
-    inputHash: hashJson(input ?? {}),
+    inputHash: inputHash || hashJson(input ?? {}),
     idempotencyKey,
     status: "running",
     startedAt,
@@ -53,7 +102,6 @@ export function createWorkflowRun({
   };
 
   writeWorkflowRun(stateDir, run);
-  appendJsonl(path.join(workflowsDir(stateDir), "runs.jsonl"), run);
   return run;
 }
 
@@ -87,17 +135,76 @@ export function listWorkflowRuns(stateDir) {
   if (!fs.existsSync(root)) return [];
 
   return fs.readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && isWorkflowRunId(entry.name))
     .map((entry) => readWorkflowRun(stateDir, entry.name))
     .filter(Boolean)
     .sort((a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || "")));
 }
 
-export function findWorkflowRunByIdempotencyKey(stateDir, name, idempotencyKey) {
-  if (!idempotencyKey) return null;
-  return listWorkflowRuns(stateDir).find((run) =>
-    run.name === name && run.idempotencyKey === idempotencyKey,
-  ) || null;
+export async function reserveWorkflowRunForIdempotency({
+  stateDir,
+  name,
+  definitionFile,
+  definitionHash,
+  inputHash,
+  input,
+  idempotencyKey,
+}: any) {
+  const normalizedKey = String(idempotencyKey || "");
+  if (!normalizedKey) {
+    return {
+      reused: false,
+      run: createWorkflowRun({ stateDir, name, definitionFile, definitionHash, inputHash, input, idempotencyKey: "" }),
+    };
+  }
+
+  const slot = idempotencySlot(name, normalizedKey);
+  const release = await acquireIdempotencyLock(stateDir, slot);
+  try {
+    const recordPath = idempotencyRecordPath(stateDir, slot);
+    const existingRecord = readJsonFile(recordPath);
+    const requested = {
+      name,
+      idempotencyKey: normalizedKey,
+      definitionHash,
+      inputHash,
+    };
+
+    if (existingRecord) {
+      const existingRun = existingRecord.workflowRunId ? readWorkflowRun(stateDir, existingRecord.workflowRunId) : null;
+      const sameRequest =
+        existingRecord.name === name &&
+        existingRecord.idempotencyKey === normalizedKey &&
+        existingRecord.definitionHash === definitionHash &&
+        existingRecord.inputHash === inputHash;
+
+      if (!sameRequest) {
+        throw new WorkflowIdempotencyConflictError({ name, existingRun, requested });
+      }
+
+      if (existingRun && !WORKFLOW_RETRYABLE_TERMINAL_STATUSES.has(existingRun.status)) {
+        return { reused: true, run: existingRun };
+      }
+    }
+
+    const run = createWorkflowRun({
+      stateDir,
+      name,
+      definitionFile,
+      definitionHash,
+      inputHash,
+      input,
+      idempotencyKey: normalizedKey,
+    });
+    writeJsonFile(recordPath, {
+      ...requested,
+      workflowRunId: run.workflowRunId,
+      updatedAt: new Date().toISOString(),
+    });
+    return { reused: false, run };
+  } finally {
+    release();
+  }
 }
 
 export function appendWorkflowEvent(stateDir, workflowRunId, event) {
@@ -198,4 +305,52 @@ function readJsonl(file) {
       }
     })
     .filter(Boolean);
+}
+
+function isPathInside(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function idempotencyDir(stateDir) {
+  return path.join(workflowsDir(stateDir), ".idempotency");
+}
+
+function idempotencySlot(name, idempotencyKey) {
+  return createHash("sha256")
+    .update(stableStringify({ name: String(name), idempotencyKey: String(idempotencyKey) }))
+    .digest("hex");
+}
+
+function idempotencyRecordPath(stateDir, slot) {
+  return path.join(idempotencyDir(stateDir), `${slot}.json`);
+}
+
+async function acquireIdempotencyLock(stateDir, slot) {
+  const root = idempotencyDir(stateDir);
+  ensureDirectory(root);
+  const lockDir = path.join(root, `${slot}.lock`);
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      fs.mkdirSync(lockDir);
+      writeJsonFile(path.join(lockDir, "lock.json"), {
+        pid: process.pid,
+        acquiredAt: new Date().toISOString(),
+      });
+      return () => {
+        fs.rmSync(lockDir, { recursive: true, force: true });
+      };
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      if (Date.now() - startedAt > 30_000) {
+        throw new Error("Timed out waiting for workflow idempotency reservation lock");
+      }
+      await delay(25);
+    }
+  }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

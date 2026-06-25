@@ -37,7 +37,7 @@ function workflowSdkAliasPlugin() {
   return {
     name: "relaymux-workflows-alias",
     setup(buildApi) {
-      buildApi.onResolve({ filter: /^@relaymux\/workflows$/ }, () => ({
+      buildApi.onResolve({ filter: /^(?:@relaymux\/workflows|relaymux\/workflows)$/ }, () => ({
         path: workflowSdkEntryPath(),
       }));
     },

@@ -1,10 +1,21 @@
 import type { WorkflowContext } from "./context.js";
 
 export { shell } from "./runnables/shell.js";
-export type { WorkflowContext } from "./context.js";
+export type {
+  Runnable,
+  RunnableExecutionContext,
+  RunnableResult,
+  WorkflowContext,
+  WorkflowErrorSummary,
+} from "./context.js";
+export type {
+  ShellOptions,
+  ShellResult,
+  ShellResultData,
+} from "./runnables/shell.js";
 
 export type WorkflowRunFunction<TInput = unknown, TOutput = unknown> = (
-  context: WorkflowContext,
+  context: WorkflowContext<TInput>,
   input: TInput,
 ) => Promise<TOutput> | TOutput;
 
