@@ -1,7 +1,7 @@
 {
   "name": "relaymux",
   "version": "0.1.0",
-  "description": "Coordinate CLI agents across local tmux, local background, and cloud-sandbox execution backends.",
+  "description": "Coordinate CLI agents in local tmux tabs with optional message adapters.",
   "type": "module",
   "types": "./dist/src/workflows/index.d.ts",
   "bin": {

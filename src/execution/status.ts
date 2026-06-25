@@ -26,14 +26,14 @@ export function handleExecutionStatus(flags, configInfo, stateDir, io, platform 
   const watchdogText = formatBackgroundWatchdogSummary(watchdog, platform);
   io.stdout.write(`Home: ${daemon.homeDir}; config ${daemon.configPath}; state ${daemon.stateDir}; logs ${daemon.logDir}; db ${daemon.dbPath}\n`);
   io.stdout.write(`Background service: ${daemon.enabled ? "enabled" : "disabled"}; mode ${daemon.launchMode}/background (no tmux); ${launchAgentText}; ${watchdogText}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}\n`);
-  io.stdout.write(`Agent execution: default ${daemon.defaultExecutor}; tmux session mode ${daemon.agentSessionMode}; ${session ? `filter session ${session}` : "showing all relaymux-managed sessions"}; tmux tabs are windows, never panes/splits.\n`);
+  io.stdout.write(`Agent execution: tmux tabs/windows only; session mode ${daemon.agentSessionMode}; ${session ? `filter session ${session}` : "showing all relaymux-managed sessions"}; never panes/splits.\n`);
 
   if (rows.length === 0) {
-    io.stdout.write(flags.history ? "No relaymux runs found.\n" : "No relaymux agent runs found. Use --history to include old local-tmux run records whose tabs are gone.\n");
+    io.stdout.write(flags.history ? "No relaymux runs found.\n" : "No relaymux agent tabs found. Use --history to include old run records whose tabs are gone.\n");
     return 0;
   }
 
-  io.stdout.write(formatTable(rows, ["state", "executor", "target", "group", "session", "tab", "agent", "name", "repo", "logs", "lastEvent"]));
+  io.stdout.write(formatTable(rows, ["state", "target", "group", "session", "tab", "agent", "name", "repo", "lastEvent"]));
   return 0;
 }
 
@@ -44,6 +44,7 @@ export function buildExecutionStatusRows({ flags = {}, stateDir, windows = listA
   const runs = readRuns(stateDir);
 
   for (const run of runs) {
+    if ((run.executor || "local-tmux") !== "local-tmux") continue;
     if (!flags.history && !shouldShowRunWithoutHistory(run)) continue;
     const window = windowsByRunId.get(run.runId);
     const latestEvent = latestEvents.get(run.runId);
@@ -61,8 +62,7 @@ export function buildExecutionStatusRows({ flags = {}, stateDir, windows = listA
 }
 
 function shouldShowRunWithoutHistory(run) {
-  const executor = run.executor || "local-tmux";
-  return executor !== "local-tmux";
+  return false;
 }
 
 function daemonStatus(config, configPath, env = process.env, platform = process.platform) {
@@ -75,7 +75,6 @@ function daemonStatus(config, configPath, env = process.env, platform = process.
     stateDir: resolveStateDir(config, env),
     logDir: resolveLogDir(config, env),
     launchMode: "direct",
-    defaultExecutor: config.execution?.defaultExecutor || "local-tmux",
     agentSessionMode,
     featureSessionMode: agentSessionMode,
     webhook: webhookStatus(config),
@@ -91,13 +90,11 @@ function statusRow(run, window, latestEvent) {
   const completed = latestEvent?.event === "completed";
   const state = completed
     ? completedState(latestEvent)
-    : executor === "local-background"
-      ? backgroundState(run)
-      : window
-        ? "running"
-        : "window-missing";
+    : window
+      ? "running"
+      : "window-missing";
 
-  const target = window?.target || run.target || run.windowTarget || pidTarget(run.pid);
+  const target = window?.target || run.target || run.windowTarget || "";
   return {
     runId: run.runId,
     started: run.time || run.started,
@@ -105,7 +102,7 @@ function statusRow(run, window, latestEvent) {
     executor,
     target,
     group: run.group || window?.group || run.session || "",
-    session: executor === "local-background" ? (run.session || "") : (window?.session || run.session || targetSession(target)),
+    session: window?.session || run.session || targetSession(target),
     tab: window ? `${window.windowIndex}:${window.windowName}` : targetTab(target),
     agent: run.agent || window?.agent || "",
     name: run.name || window?.name || "",
@@ -125,31 +122,11 @@ function completedState(event) {
   return number === 0 ? "completed:0" : `failed:${code}`;
 }
 
-function backgroundState(run) {
-  if (isProcessAlive(run.pid)) return "running";
-  return "process-missing";
-}
-
-function isProcessAlive(pid) {
-  const number = Number(pid);
-  if (!Number.isInteger(number) || number <= 0) return false;
-  try {
-    process.kill(number, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function formatLastEvent(event) {
   if (!event) return "";
   const code = event.exitCode === undefined ? "" : `:${event.exitCode}`;
   const message = event.message ? ` ${event.message}` : "";
   return `${event.event}${code}${message}`;
-}
-
-function pidTarget(pid) {
-  return pid ? `pid:${pid}` : "";
 }
 
 function targetSession(target) {
