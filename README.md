@@ -1,14 +1,14 @@
 # relaymux
 
-`relaymux` is a lightweight local metaharness for coding agents. 
+`relaymux` is a lightweight local metaharness for coding agents.
 
-Telegram is the remote control / orchestrator; `tmux` tabs are where the actual agent work happens.
+Telegram or iMessage can be the remote control / orchestrator; `tmux` tabs are where the actual agent work happens.
 
 When relaymux launches an agent, it opens a visible `tmux` tab on your machine so you can attach, watch, interrupt, or debug the run like any normal terminal session.
 
 ## Requirements
 
-You need Node.js 20+, npm, `tmux`, and a local agent CLI such as `pi`, `codex`, or `claude`. 
+You need Node.js 20+, npm, `tmux`, and a local agent CLI such as `pi`, `codex`, or `claude`.
 
 SQLite support uses the system `sqlite3` CLI for `relaymux db` commands; normal launch, status, notify, and adapter commands do not require it.
 
@@ -50,7 +50,7 @@ relaymux notify --from test --reply-mode telegram --message "hello from relaymux
 
 ## tmux is the workspace
 
-relaymux uses one shared `tmux` session named `agents` by default. Each launched agent gets its own tmux window. This is the core idea: Telegram starts and receives updates from work, but tmux keeps that work visible and recoverable locally.
+relaymux uses one shared `tmux` session named `agents` by default. Each launched agent gets its own tmux window. This is the core idea: Telegram or iMessage starts and receives updates from work, but tmux keeps that work visible and recoverable locally.
 
 Attach any time:
 
@@ -58,7 +58,7 @@ Attach any time:
 tmux attach -t agents
 ```
 
-Detach with `Ctrl-b d`. Closing Telegram does not stop the tmux run.
+Detach with `Ctrl-b d`. Closing Telegram or iMessage does not stop the tmux run.
 
 ## Launch an agent manually
 

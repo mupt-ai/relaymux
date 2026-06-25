@@ -84,6 +84,28 @@ test("supervise-tmux daemon mode is retired by default", async () => {
   assert.match(harness.stderr, /outside tmux/);
 });
 
+test("launch rejects removed executor flags", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-repo-"));
+  const harness = makeIo();
+  const code = await main([
+    "--config",
+    writeTempConfig("launch-executor-rejected"),
+    "launch",
+    "--repo",
+    dir,
+    "--agent",
+    "custom",
+    "--prompt",
+    "noop",
+    "--executor",
+    "local-background",
+    "--dry-run",
+  ], harness.io);
+
+  assert.equal(code, 1);
+  assert.match(harness.stderr, /only supports tmux/);
+});
+
 test("launch dry-run defaults to the shared configured session", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relaymux-repo-"));
   const harness = makeIo();

@@ -1,28 +1,31 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 
 import { parseArgv } from "./args.js";
-import { buildAgentInvocation, buildTmuxShellCommand, buildTmuxShellScript, quoteArgv, renderTemplate, shellExportBlock } from "./command.js";
+import { quoteArgv, renderTemplate, shellExportBlock } from "./command.js";
 import { assertNoFatalCommandFindings } from "./command-validation.js";
 import { collectDoctorChecks } from "./doctor.js";
 import { expectedSchemaSql, initRelaymuxDb, relaymuxDbPath, relaymuxDbStatus } from "./db.js";
 import { defaultConfig, defaultConfigPath, getIntegration, isIntegrationEnabled, loadConfig, resolveLogDir, resolveStateDir, writeConfig } from "./config.js";
 import { runDaemon } from "./daemon.js";
-import { backgroundServicePath, getLaunchAgentStatus, getLaunchAgentWatchdogStatus, installLaunchAgent, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
+import { getLaunchAgentStatus, installLaunchAgent, printLaunchAgentStatus, restartLaunchAgent, uninstallLaunchAgent } from "./launch-agent.js";
 import { handleNotify } from "./notify.js";
 import { handleSchedule, scheduleHelpText } from "./schedule.js";
-import { webhookConfig, webhookStatus } from "./webhook.js";
+import { webhookConfig } from "./webhook.js";
 import { expandPath, ensureDirectory, pathExists, readTextFile } from "./paths.js";
 import { applyHomeMigration, buildHomeMigrationInventory, ensureRelaymuxHomeLayout, formatHomeMigrationInventory, formatHomeMigrationResults } from "./migration.js";
 import { buildImsgConfig, initOptionsFromFlags, resolveImsgChatId } from "./setup-imsg.js";
 import { buildTelegramConfig, initTelegramOptionsFromFlags, withTelegramIntegration } from "./setup-telegram.js";
-import { latestEventsByRun, readRuns, recordRun, writePromptFile, writeScriptFile } from "./state.js";
-import { resolveLaunchSession, resolveTmuxSessionMode } from "./session.js";
-import { createAgentWindow, createCommandWindow, killWindowByName, listAgentWindows, sendShellCommand, setWindowMetadata, validateSessionName } from "./tmux.js";
+import { resolveLaunchSession } from "./session.js";
+import { createCommandWindow, killWindowByName, listAgentWindows, setWindowMetadata, validateSessionName } from "./tmux.js";
 import { createWorktree, resolveRepoAndWorkdir } from "./worktree.js";
 import { isReplyMode, replyModesText } from "./reply-modes.js";
+import { resolveAgentConfig } from "./launch/agents.js";
+import { makeRunId, sanitizeLaunchName } from "./launch/names.js";
+import { resolveLaunchNotification } from "./launch/notifications.js";
+import { launchTmuxAgent } from "./launch/tmux.js";
+import { handleStatus } from "./status.js";
 
 export async function main(argv, io = defaultIo()) {
   try {
@@ -441,121 +444,48 @@ function formatMigrationList(migrations) {
 
 function handleLaunch(flags, configInfo, stateDir, io) {
   const config = configInfo.config;
-  const agentName = flags.agent;
-  if (!agentName) {
-    throw new Error("Missing --agent <name>");
+  const agent = resolveAgentConfig(config, flags.agent);
+  assertNoFatalCommandFindings(agent.agentName, agent.agentConfig, { location: `agents.${agent.agentName}` });
+
+  if (flags.executor !== undefined || flags.mode !== undefined || flags.group !== undefined) {
+    throw new Error("relaymux launch only supports tmux; use --session to choose a tmux session.");
   }
-  const agentConfig = config.agents?.[agentName];
-  if (!agentConfig) {
-    throw new Error(`Unknown agent "${agentName}". Add it to your config under agents.`);
-  }
-  assertNoFatalCommandFindings(agentName, agentConfig, { location: `agents.${agentName}` });
 
   const prompt = resolvePrompt(flags);
   const runId = flags.runId || makeRunId();
   const { repo, workdir, worktreeAddArgs } = resolveRepoAndWorkdir(flags);
-  const name = sanitizeName(flags.name || `${agentName}-${path.basename(workdir)}-${runId.slice(-6)}`);
+  const name = sanitizeLaunchName(flags.name || `${agent.agentName}-${path.basename(workdir)}-${runId.slice(-6)}`);
   const sessionInfo = resolveLaunchSession({ flags, config, env: io.env, repo, workdir, name });
-  const session = sessionInfo.session;
   const holdOnExit = flags.hold ?? config.holdOnExit ?? false;
   const launchNotification = resolveLaunchNotification(flags, config);
 
-  if (flags.dryRun) {
-    const promptFile = path.join(stateDir, "prompts", `${runId}.txt`);
-    const scriptFile = path.join(stateDir, "scripts", `${runId}.sh`);
-    const script = buildLaunchShellScript(agentName, agentConfig, {
-      agent: agentName,
-      cliPath: process.argv[1],
-      configPath: configInfo.path,
-      holdOnExit,
-      launchNotification,
-      name,
-      prompt,
-      promptFile,
-      repo,
-      runId,
-      session,
-      workdir,
-    });
-    const shellCommand = buildTmuxShellCommand(scriptFile);
-    io.stdout.write(`# tmux session: ${session} (${sessionInfo.mode}; ${sessionInfo.source})\n`);
-    if (worktreeAddArgs) {
-      io.stdout.write(`worktree: ${quoteArgv(["git", ...worktreeAddArgs])}\n`);
-    }
-    io.stdout.write(`${shellCommand}\n`);
-    io.stdout.write("\n# wrapper script\n");
-    io.stdout.write(`${script}\n`);
-    return 0;
-  }
-
-  if (worktreeAddArgs) {
+  if (!flags.dryRun && worktreeAddArgs) {
     createWorktree(worktreeAddArgs);
   }
 
-  ensureDirectory(stateDir);
-  const promptFile = writePromptFile(stateDir, runId, prompt);
-  const script = buildLaunchShellScript(agentName, agentConfig, {
-    agent: agentName,
+  launchTmuxAgent({
+    agentConfig: agent.agentConfig,
+    agentName: agent.agentName,
+    attach: Boolean(flags.attach),
     cliPath: process.argv[1],
     configPath: configInfo.path,
+    dryRun: Boolean(flags.dryRun),
     holdOnExit,
+    io,
     launchNotification,
     name,
+    printCommand: Boolean(flags.printCommand),
     prompt,
-    promptFile,
+    quoteArgv,
     repo,
     runId,
-    session,
+    session: sessionInfo.session,
+    sessionInfo,
+    stateDir,
     workdir,
-  });
-  const scriptFile = writeScriptFile(stateDir, runId, script);
-  const shellCommand = buildTmuxShellCommand(scriptFile);
-
-  if (flags.printCommand) {
-    io.stdout.write(`${shellCommand}\n`);
-  }
-
-  const target = createAgentWindow({
-    session,
-    name,
-    cwd: workdir,
+    worktreeAddArgs,
   });
 
-  const started = new Date().toISOString();
-  setWindowMetadata(target.windowTarget, {
-    relaymux: "1",
-    relaymux_agent: agentName,
-    relaymux_name: name,
-    relaymux_repo: repo,
-    relaymux_run_id: runId,
-    relaymux_session: session,
-    relaymux_session_mode: sessionInfo.mode,
-    relaymux_started: started,
-  });
-  sendShellCommand(target.target, shellCommand);
-
-  recordRun(stateDir, {
-    time: started,
-    runId,
-    session,
-    sessionMode: sessionInfo.mode,
-    sessionSource: sessionInfo.source,
-    target: target.target,
-    windowTarget: target.windowTarget,
-    name,
-    agent: agentName,
-    repo,
-    workdir,
-    promptFile,
-    scriptFile,
-    command: shellCommand,
-  });
-
-  io.stdout.write(`Started ${name} in tmux session ${session} tab ${target.windowTarget} (target ${target.target})\n`);
-  io.stdout.write(`Run ID: ${runId}\n`);
-  if (flags.attach) {
-    io.stdout.write(`Attach with: tmux attach -t ${session}\n`);
-  }
   return 0;
 }
 
@@ -600,7 +530,7 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
   const config = configInfo.config;
   const session = String(flags.session);
   validateSessionName(session);
-  const windowName = sanitizeName(flags.windowName || "relaymux-daemon");
+  const windowName = sanitizeLaunchName(flags.windowName || "relaymux-daemon");
   const cwd = expandPath(config.orchestrator?.cwd || "~");
   const daemonArgv = [process.execPath, process.argv[1], "--config", configInfo.path, "daemon", "--session", session];
   const exitBehavior = flags.hold
@@ -714,7 +644,7 @@ async function handleSuperviseTmux(flags, configInfo, stateDir, io) {
   const config = configInfo.config;
   const session = String(flags.session || io.env.RELAYMUX_SESSION || config.session || "agents");
   validateSessionName(session);
-  const windowName = sanitizeName(flags.windowName || "relaymux-daemon");
+  const windowName = sanitizeLaunchName(flags.windowName || "relaymux-daemon");
   const configuredIntervalMs = Number(flags.intervalMs || config.daemon?.supervisorPollMs || 15000);
   const intervalMs = Number.isFinite(configuredIntervalMs) ? Math.max(1000, configuredIntervalMs) : 15000;
   let checking = false;
@@ -778,7 +708,7 @@ function tmuxStackRepairReason(config, session, windowName) {
 
   const extraWindows = Array.isArray(config.tmux?.extraWindows) ? config.tmux.extraWindows : [];
   for (const [index, extraWindow] of extraWindows.entries()) {
-    const name = sanitizeName(extraWindow.name || `extra-${index + 1}`);
+    const name = sanitizeLaunchName(extraWindow.name || `extra-${index + 1}`);
     const exists = windows.some((window) => window.agent === "extra" && (window.name === name || window.windowName === name));
     if (!exists) {
       return `extra window ${session}:${name} is missing`;
@@ -793,7 +723,7 @@ function resolveExtraTmuxWindows(config, context) {
   if (!Array.isArray(extraWindows)) return [];
 
   return extraWindows.map((extraWindow, index) => {
-    const name = sanitizeName(extraWindow.name || `extra-${index + 1}`);
+    const name = sanitizeLaunchName(extraWindow.name || `extra-${index + 1}`);
     const templateContext = {
       ...context,
       name,
@@ -833,163 +763,6 @@ function resolveExtraTmuxWindows(config, context) {
       shellCommand,
     };
   });
-}
-
-function buildLaunchShellScript(agentName, agentConfig, context) {
-  const invocation = buildAgentInvocation(agentName, agentConfig, context);
-  return buildTmuxShellScript(invocation, context);
-}
-
-function resolveLaunchNotification(flags, config) {
-  const configured = config.launchNotifications || {};
-  const onExit = String(flags.notifyOnExit ?? configured.onExit ?? configured.notifyOnExit ?? "never");
-  const replyMode = String(flags.notifyReplyMode ?? configured.replyMode ?? "imessage");
-  const tailLines = normalizePositiveInteger(flags.notifyTailLines ?? configured.tailLines, 80);
-  const tailBytes = normalizePositiveInteger(flags.notifyTailBytes ?? configured.tailBytes, 4000);
-
-  if (!["never", "failure", "always"].includes(onExit)) {
-    throw new Error("--notify-on-exit / launchNotifications.onExit must be never, failure, or always");
-  }
-  if (!isReplyMode(replyMode)) {
-    throw new Error(`--notify-reply-mode / launchNotifications.replyMode must be ${replyModesText()}`);
-  }
-
-  return { onExit, replyMode, tailLines, tailBytes };
-}
-
-function normalizePositiveInteger(value, fallback) {
-  const number = Number(value ?? fallback);
-  if (!Number.isFinite(number) || number < 1) return fallback;
-  return Math.floor(number);
-}
-
-function handleStatus(flags, configInfo, stateDir, io, platform = process.platform) {
-  const config = configInfo.config;
-  const session = flags.session ? String(flags.session) : undefined;
-  const windows = listAgentWindows({ session });
-  const windowsByRunId = new Map(windows.map((window) => [window.runId, window]));
-  const latestEvents = latestEventsByRun(stateDir);
-  const rows = [];
-
-  if (flags.history) {
-    const runs = readRuns(stateDir);
-    for (const run of runs) {
-      const window = windowsByRunId.get(run.runId);
-      const latestEvent = latestEvents.get(run.runId);
-      rows.push(statusRow(run, window, latestEvent));
-    }
-  }
-
-  for (const window of windows) {
-    if (!rows.some((row) => row.runId === window.runId)) {
-      rows.push(statusRow(window, window, latestEvents.get(window.runId)));
-    }
-  }
-
-  rows.sort((a, b) => String(b.started).localeCompare(String(a.started)));
-  const daemon = daemonStatus(config, configInfo.path, io.env, platform);
-
-  if (flags.json) {
-    io.stdout.write(`${JSON.stringify({ daemon, runs: rows }, null, 2)}\n`);
-    return 0;
-  }
-
-  const launchAgent: any = daemon.launchAgent;
-  const launchAgentText = formatBackgroundServiceSummary(launchAgent, platform);
-  io.stdout.write(`Home: ${daemon.homeDir}; config ${daemon.configPath}; state ${daemon.stateDir}; logs ${daemon.logDir}; db ${daemon.dbPath}\n`);
-  const watchdog: any = daemon.launchAgentWatchdog;
-  const watchdogText = formatBackgroundWatchdogSummary(watchdog, platform);
-  io.stdout.write(`Background service: ${daemon.enabled ? "enabled" : "disabled"}; mode ${daemon.launchMode}/background (no tmux); ${launchAgentText}; ${watchdogText}; webhook ${daemon.webhook.endpoints.message}; token ${daemon.webhook.tokenFileExists ? daemon.webhook.tokenFileMode : "missing"}\n`);
-  io.stdout.write(`Agent tmux: session mode ${daemon.agentSessionMode}; ${session ? `filter session ${session}` : "showing all relaymux-managed sessions"}; tabs are tmux windows, never panes/splits.\n`);
-
-  if (rows.length === 0) {
-    io.stdout.write(flags.history ? "No relaymux runs found.\n" : "No relaymux agent tabs found. Use --history to include old run records.\n");
-    return 0;
-  }
-
-  io.stdout.write(formatTable(rows, ["state", "target", "session", "tab", "agent", "name", "repo", "lastEvent"]));
-  return 0;
-}
-
-function formatBackgroundServiceSummary(status, platform) {
-  if (status.serviceManager === "systemd") {
-    if (!status.supported) return `systemd user service ${status.serviceName} unavailable`;
-    return status.loaded
-      ? `systemd user service ${status.serviceName} active${status.running && status.pid ? ` pid=${status.pid}` : ""}`
-      : `systemd user service ${status.serviceName} not active`;
-  }
-  if (status.serviceManager === "launchd" || platform === "darwin") {
-    return status.supported
-      ? status.loaded
-        ? `LaunchAgent ${status.label} loaded${status.running ? ` pid=${status.pid}` : ""}`
-        : `LaunchAgent ${status.label} not loaded`
-      : `LaunchAgent unsupported on ${platform}`;
-  }
-  return `background service unsupported on ${platform}`;
-}
-
-function formatBackgroundWatchdogSummary(watchdog, platform) {
-  if (platform === "linux") return "restart policy systemd Restart=always";
-  if (watchdog?.enabled) {
-    return watchdog.loaded
-      ? `watchdog ${watchdog.label} loaded every ${watchdog.intervalSeconds}s`
-      : `watchdog ${watchdog.label} not loaded`;
-  }
-  return "watchdog disabled";
-}
-
-function daemonStatus(config, configPath, env = process.env, platform = process.platform) {
-  const agentSessionMode = resolveTmuxSessionMode({ config });
-  return {
-    enabled: config.daemon?.enabled !== false,
-    homeDir: path.dirname(defaultConfigPath(env)),
-    dbPath: relaymuxDbPath(env),
-    configPath,
-    stateDir: resolveStateDir(config, env),
-    logDir: resolveLogDir(config, env),
-    launchMode: "direct",
-    agentSessionMode,
-    featureSessionMode: agentSessionMode,
-    webhook: webhookStatus(config),
-    backgroundServicePath: backgroundServicePath(config, { platform, env }),
-    launchAgentPath: backgroundServicePath(config, { platform, env }),
-    launchAgent: getLaunchAgentStatus(config, { platform, env }),
-    launchAgentWatchdog: getLaunchAgentWatchdogStatus(config, { platform, env }),
-  };
-}
-
-function statusRow(run, window, latestEvent) {
-  const completed = latestEvent?.event === "completed";
-  const state = completed
-      ? `completed:${latestEvent.exitCode ?? ""}`
-      : window
-        ? "running"
-        : "window-missing";
-
-  const target = window?.target || run.windowTarget || run.target || "";
-  return {
-    runId: run.runId,
-    started: run.time || run.started,
-    state,
-    target,
-    session: window?.session || run.session || targetSession(target),
-    tab: window ? `${window.windowIndex}:${window.windowName}` : targetTab(target),
-    agent: run.agent || window?.agent || "",
-    name: run.name || window?.name || "",
-    repo: run.repo || window?.repo || "",
-    workdir: run.workdir || window?.cwd || "",
-    lastEvent: latestEvent ? `${latestEvent.event}${latestEvent.message ? `: ${latestEvent.message}` : ""}` : "",
-  };
-}
-
-function targetSession(target) {
-  return String(target || "").split(":")[0] || "";
-}
-
-function targetTab(target) {
-  const text = String(target || "");
-  const tab = text.includes(":") ? text.slice(text.indexOf(":") + 1) : text;
-  return tab.replace(/\.\d+$/, "");
 }
 
 function handleDoctor(configInfo, io, platform = process.platform) {
@@ -1096,35 +869,6 @@ async function postDaemonRequest(config, body, timeoutMs): Promise<any> {
     }
     req.end(payload);
   });
-}
-
-function sanitizeName(value) {
-  return String(value)
-    .trim()
-    .replace(/[^A-Za-z0-9_.-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "agent";
-}
-
-function makeRunId() {
-  return `run-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
-}
-
-function formatTable(rows, columns) {
-  const headers = columns.map((column) => column.toUpperCase());
-  const widths = columns.map((column, index) =>
-    Math.max(headers[index].length, ...rows.map((row) => String(row[column] ?? "").length)),
-  );
-
-  const lines = [
-    headers.map((header, index) => header.padEnd(widths[index])).join("  "),
-    widths.map((width) => "-".repeat(width)).join("  "),
-  ];
-
-  for (const row of rows) {
-    lines.push(columns.map((column, index) => String(row[column] ?? "").padEnd(widths[index])).join("  "));
-  }
-  return `${lines.join("\n")}\n`;
 }
 
 function defaultIo() {
