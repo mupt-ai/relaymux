@@ -21,12 +21,11 @@ import { resolveLaunchSession } from "./session.js";
 import { createCommandWindow, killWindowByName, listAgentWindows, setWindowMetadata, validateSessionName } from "./tmux.js";
 import { createWorktree, resolveRepoAndWorkdir } from "./worktree.js";
 import { isReplyMode, replyModesText } from "./reply-modes.js";
-import { resolveAgentConfig } from "./execution/agents.js";
-import { launchExecution } from "./execution/index.js";
-import { makeRunId, sanitizeExecutionName } from "./execution/names.js";
-import { resolveLaunchNotification } from "./execution/notifications.js";
-import { resolveExecutionGroup, resolveExecutorName } from "./execution/selection.js";
-import { handleExecutionStatus } from "./execution/status.js";
+import { resolveAgentConfig } from "./launch/agents.js";
+import { makeRunId, sanitizeLaunchName } from "./launch/names.js";
+import { resolveLaunchNotification } from "./launch/notifications.js";
+import { launchTmuxAgent } from "./launch/tmux.js";
+import { handleStatus } from "./status.js";
 import { handleWorkflowCommand } from "./workflows/cli.js";
 
 export async function main(argv, io = defaultIo()) {
@@ -61,7 +60,7 @@ export async function main(argv, io = defaultIo()) {
       case "launch":
         return handleLaunch(parsed.flags, configInfo, stateDir, io);
       case "status":
-        return handleExecutionStatus(parsed.flags, configInfo, stateDir, io, platform);
+        return handleStatus(parsed.flags, configInfo, stateDir, io, platform);
       case "workflow":
         return await handleWorkflowCommand({
           flags: parsed.flags,
@@ -456,26 +455,15 @@ function handleLaunch(flags, configInfo, stateDir, io) {
   const agent = resolveAgentConfig(config, flags.agent);
   assertNoFatalCommandFindings(agent.agentName, agent.agentConfig, { location: `agents.${agent.agentName}` });
 
+  if (flags.executor !== undefined || flags.mode !== undefined || flags.group !== undefined) {
+    throw new Error("relaymux launch only supports tmux; use --session to choose a tmux session.");
+  }
+
   const prompt = resolvePrompt(flags);
   const runId = flags.runId || makeRunId();
   const { repo, workdir, worktreeAddArgs } = resolveRepoAndWorkdir(flags);
-  const name = sanitizeExecutionName(flags.name || `${agent.requestedAgent}-${path.basename(workdir)}-${runId.slice(-6)}`);
-  if (flags.mode !== undefined) {
-    throw new Error("--mode is not supported; agents always launch in tmux tabs.");
-  }
-  const executor = resolveExecutorName({ flags, config });
-  const sessionInfo = resolveLaunchSession({
-    flags: flags.group && !flags.session ? { ...flags, session: flags.group } : flags,
-    config,
-    env: io.env,
-    repo,
-    workdir,
-    name,
-  });
-  if (flags.group && !flags.session) {
-    sessionInfo.source = "--group";
-  }
-  const group = resolveExecutionGroup({ flags, executor, sessionInfo });
+  const name = sanitizeLaunchName(flags.name || `${agent.agentName}-${path.basename(workdir)}-${runId.slice(-6)}`);
+  const sessionInfo = resolveLaunchSession({ flags, config, env: io.env, repo, workdir, name });
   const holdOnExit = flags.hold ?? config.holdOnExit ?? false;
   const launchNotification = resolveLaunchNotification(flags, config);
 
@@ -483,17 +471,13 @@ function handleLaunch(flags, configInfo, stateDir, io) {
     createWorktree(worktreeAddArgs);
   }
 
-  launchExecution({
+  launchTmuxAgent({
     agentConfig: agent.agentConfig,
     agentName: agent.agentName,
     attach: Boolean(flags.attach),
     cliPath: process.argv[1],
-    config,
     configPath: configInfo.path,
     dryRun: Boolean(flags.dryRun),
-    env: io.env,
-    executor,
-    group,
     holdOnExit,
     io,
     launchNotification,
@@ -502,9 +486,8 @@ function handleLaunch(flags, configInfo, stateDir, io) {
     prompt,
     quoteArgv,
     repo,
-    requestedAgent: agent.requestedAgent,
     runId,
-    session: sessionInfo?.session || group,
+    session: sessionInfo.session,
     sessionInfo,
     stateDir,
     workdir,
@@ -555,7 +538,7 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
   const config = configInfo.config;
   const session = String(flags.session);
   validateSessionName(session);
-  const windowName = sanitizeExecutionName(flags.windowName || "relaymux-daemon");
+  const windowName = sanitizeLaunchName(flags.windowName || "relaymux-daemon");
   const cwd = expandPath(config.orchestrator?.cwd || "~");
   const daemonArgv = [process.execPath, process.argv[1], "--config", configInfo.path, "daemon", "--session", session];
   const exitBehavior = flags.hold
@@ -613,8 +596,6 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
     relaymux_agent: "daemon",
     relaymux_config: configInfo.path,
     relaymux_daemon: "1",
-    relaymux_executor: "local-tmux",
-    relaymux_group: session,
     relaymux_name: windowName,
     relaymux_repo: cwd,
     relaymux_run_id: `daemon-${session}`,
@@ -642,8 +623,6 @@ function handleStartTmux(flags, configInfo, stateDir, io) {
       relaymux_agent: "extra",
       relaymux_config: configInfo.path,
       relaymux_extra: "1",
-      relaymux_executor: "local-tmux",
-      relaymux_group: session,
       relaymux_name: extraWindow.name,
       relaymux_repo: extraWindow.cwd,
       relaymux_run_id: `extra-${session}-${extraWindow.name}`,
@@ -673,7 +652,7 @@ async function handleSuperviseTmux(flags, configInfo, stateDir, io) {
   const config = configInfo.config;
   const session = String(flags.session || io.env.RELAYMUX_SESSION || config.session || "agents");
   validateSessionName(session);
-  const windowName = sanitizeExecutionName(flags.windowName || "relaymux-daemon");
+  const windowName = sanitizeLaunchName(flags.windowName || "relaymux-daemon");
   const configuredIntervalMs = Number(flags.intervalMs || config.daemon?.supervisorPollMs || 15000);
   const intervalMs = Number.isFinite(configuredIntervalMs) ? Math.max(1000, configuredIntervalMs) : 15000;
   let checking = false;
@@ -737,7 +716,7 @@ function tmuxStackRepairReason(config, session, windowName) {
 
   const extraWindows = Array.isArray(config.tmux?.extraWindows) ? config.tmux.extraWindows : [];
   for (const [index, extraWindow] of extraWindows.entries()) {
-    const name = sanitizeExecutionName(extraWindow.name || `extra-${index + 1}`);
+    const name = sanitizeLaunchName(extraWindow.name || `extra-${index + 1}`);
     const exists = windows.some((window) => window.agent === "extra" && (window.name === name || window.windowName === name));
     if (!exists) {
       return `extra window ${session}:${name} is missing`;
@@ -752,7 +731,7 @@ function resolveExtraTmuxWindows(config, context) {
   if (!Array.isArray(extraWindows)) return [];
 
   return extraWindows.map((extraWindow, index) => {
-    const name = sanitizeExecutionName(extraWindow.name || `extra-${index + 1}`);
+    const name = sanitizeLaunchName(extraWindow.name || `extra-${index + 1}`);
     const templateContext = {
       ...context,
       name,
@@ -911,13 +890,12 @@ function defaultIo() {
 }
 
 function helpText() {
-  return `relaymux - coordinate CLI agents in local tmux tabs
+  return `relaymux - coordinate local CLI agents in tmux with optional notification adapters
 
 Mental model:
   - The background daemon/local API runs directly outside tmux (LaunchAgent on macOS, systemd user service on Linux) when installed.
-  - Agents always open tmux tabs/windows in one shared session by default.
+  - By default, all agents open as tmux tabs/windows in one shared session.
   - Managed config/state/logs/prompts/scratch live under ~/.relaymux by default.
-  - Use --group to group runs; --group maps to the tmux session unless --session is supplied.
   - Use --session only when you explicitly want a separate/new/named tmux session; panes/splits are never used.
 
 Start here:
@@ -932,7 +910,7 @@ Usage:
   relaymux restart-launch-agent [--dry-run] [--no-load] [--no-watchdog]
   relaymux status-launch-agent [--json]
   relaymux uninstall-launch-agent
-  relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>] [--group <name>] [--notify-on-exit never|failure|always]
+  relaymux launch --repo <path> --agent <name> --prompt <text|@file> [--name <name>] [--notify-on-exit never|failure|always]
   relaymux workflow run <file> --name <name> [--input-json <json>] [--input-file <path>] [--idempotency-key <key>] [--json]
   relaymux workflow status [workflowRunId] [--json] [--events]
   relaymux workflow list [--json]
@@ -971,16 +949,14 @@ Migration options:
 
 Launch options:
   --prompt-file <path>       Read prompt from a file
-  --executor local-tmux      Compatibility option; agents always launch in tmux tabs
-  --group <name>             Group this run; uses it as the tmux session when --session is omitted
   --session <name>           Explicitly launch this agent into a separate/named tmux session
   --session-mode <mode>      shared (default) or per-worktree
   --worktree <path>          Launch from a generic git worktree path
   --create-worktree          Create --worktree with git worktree add when missing
   --worktree-branch <name>   Branch name to use with --create-worktree/session naming
   --worktree-from <ref>      Starting ref to use with --create-worktree
-  --dry-run                  Print the executor command/wrapper without launching
-  --print-command            Print the executor command before launching
+  --dry-run                  Print the tmux tab command without launching
+  --print-command            Print the tmux tab command before launching
   --hold                     Keep a shell open after the agent exits
   --attach                   Print attach command after launch
   --notify-on-exit <mode>    Auto relaymux notify on agent exit: never (default), failure, or always

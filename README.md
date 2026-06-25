@@ -1,14 +1,14 @@
 # relaymux
 
-`relaymux` is a lightweight metaharness for coding agents.
+`relaymux` is a lightweight local metaharness for coding agents.
 
-Telegram or iMessage can be the remote control / orchestrator. Agent work runs locally in `tmux`; every delegated subagent is a visible tmux tab/window.
+Telegram or iMessage can be the remote control / orchestrator; `tmux` tabs are where the actual agent work happens.
+
+When relaymux launches an agent, it opens a visible `tmux` tab on your machine so you can attach, watch, interrupt, or debug the run like any normal terminal session.
 
 ## Requirements
 
-You need Node.js 20+, npm, and a local agent CLI such as `pi`, `codex`, or `claude`.
-
-`tmux` is required for agent launches.
+You need Node.js 20+, npm, `tmux`, and a local agent CLI such as `pi`, `codex`, or `claude`.
 
 SQLite support uses the system `sqlite3` CLI for `relaymux db` commands; normal launch, status, notify, and adapter commands do not require it.
 
@@ -48,9 +48,19 @@ Manual notification test:
 relaymux notify --from test --reply-mode telegram --message "hello from relaymux"
 ```
 
-## Agent Execution
+## tmux is the workspace
 
-`relaymux launch` opens a tmux tab/window for the selected local agent:
+relaymux uses one shared `tmux` session named `agents` by default. Each launched agent gets its own tmux window. This is the core idea: Telegram or iMessage starts and receives updates from work, but tmux keeps that work visible and recoverable locally.
+
+Attach any time:
+
+```bash
+tmux attach -t agents
+```
+
+Detach with `Ctrl-b d`. Closing Telegram or iMessage does not stop the tmux run.
+
+## Launch an agent manually
 
 ```bash
 relaymux launch \
@@ -60,23 +70,15 @@ relaymux launch \
   --prompt "Inspect the failing tests and summarize what is broken."
 ```
 
-`--group <name>` groups runs and becomes the tmux session when `--session` is not provided. Existing `--session` and `--session-mode shared|per-worktree` behavior remains supported.
-
-Agent names are resolved exactly from `config.agents`; use names like `claude` or `codex` directly.
-
-relaymux uses one shared `tmux` session named `agents` by default. Each launched agent gets its own tmux window. Telegram starts and receives updates from work, but tmux keeps that work visible and recoverable locally.
-
-Attach any time:
+Then attach with:
 
 ```bash
 tmux attach -t agents
 ```
 
-Detach with `Ctrl-b d`. Closing Telegram does not stop the tmux run.
-
 ## TypeScript workflows
 
-`relaymux workflow` is the first focused workflow runner. It runs in the foreground, loads a local `.ts` or `.js` workflow file, and persists workflow state under:
+`relaymux workflow` runs a local `.ts` or `.js` workflow file in the foreground and persists workflow state under:
 
 ```text
 <stateDir>/workflows/<workflowRunId>/
@@ -184,21 +186,3 @@ Idempotency keys are scoped to `name + idempotencyKey + definitionHash + inputHa
 `workflow list` is the script-friendly list command. Bare `workflow status` without a run id is kept as an interactive alias for the same table; use `workflow status <workflowRunId> --events` for a single run. `workflow status --events` requires a run id.
 
 Unsupported workflow-platform features such as background workflow supervision, agent loops, approvals, retries, HTTP steps, and cancellation are not implemented yet.
-
-## Launch an agent manually
-
-```bash
-relaymux launch \
-  --repo ~/code/my-app \
-  --agent pi \
-  --name inspect-tests \
-  --prompt "Inspect the failing tests and summarize what is broken."
-```
-
-Then attach with:
-
-```bash
-tmux attach -t agents
-```
-
-That command opens a tmux tab/window in the configured relaymux session.

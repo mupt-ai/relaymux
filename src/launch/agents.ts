@@ -7,7 +7,6 @@ export function resolveAgentConfig(config, requestedAgent) {
   const agents = config.agents || {};
   if (agents[requested]) {
     return {
-      requestedAgent: requested,
       agentName: requested,
       agentConfig: agents[requested],
     };
