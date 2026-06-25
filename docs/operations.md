@@ -126,14 +126,14 @@ relaymux db schema
 
 `relaymux db init` and live DB status checks require the system `sqlite3` CLI. `relaymux doctor` reports whether it is available, but missing SQLite is warning-only unless you run a DB command.
 
-For a no-adapter smoke test from a clone:
+For a no-adapter local check from a clone:
 
 ```bash
 npm run build
 rm -rf /tmp/relaymux-mock
 node ./dist/bin/relaymux.js --config examples/config.mock.json daemon --once
 node ./dist/bin/relaymux.js --config examples/config.mock.json launch \
-  --repo /tmp/relaymux-mock/repo --agent custom --name smoke --prompt "smoke"
+  --repo /tmp/relaymux-mock/repo --agent custom --name manual-check --prompt "check"
 node ./dist/bin/relaymux.js --config examples/config.mock.json status --history
 ```
 

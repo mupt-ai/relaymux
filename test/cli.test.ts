@@ -44,7 +44,7 @@ function makeExecutable(dir: string, name: string, body = "printf 'fake\\n'") {
 
 test("start-tmux daemon mode is retired by default", async () => {
   const harness = makeIo();
-  const code = await main(["--config", tempConfigPath("retired-start-tmux"), "start-tmux", "--session", "smoke", "--dry-run"], harness.io);
+  const code = await main(["--config", tempConfigPath("retired-start-tmux"), "start-tmux", "--session", "fixture", "--dry-run"], harness.io);
 
   assert.equal(code, 1);
   assert.match(harness.stderr, /daemon mode is retired/);
@@ -59,14 +59,14 @@ test("legacy start-tmux dry-run requires explicit opt-in", async () => {
     "start-tmux",
     "--allow-tmux-daemon",
     "--session",
-    "smoke",
+    "fixture",
     "--dry-run",
   ], harness.io);
 
   assert.equal(code, 0);
-  assert.match(harness.stdout, /# session: smoke/);
-  assert.match(harness.stdout, /RELAYMUX_SESSION=smoke/);
-  assert.match(harness.stdout, /daemon --session smoke/);
+  assert.match(harness.stdout, /# session: fixture/);
+  assert.match(harness.stdout, /RELAYMUX_SESSION=fixture/);
+  assert.match(harness.stdout, /daemon --session fixture/);
 });
 
 test("supervise-tmux daemon mode is retired by default", async () => {

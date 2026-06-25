@@ -135,12 +135,12 @@ Config shape:
 <stateDir>/workflows/<workflowRunId>/
 ```
 
-Run the example workflow:
+Run a workflow file:
 
 ```bash
-relaymux workflow run examples/workflows/shell-smoke.ts \
-  --name shell-smoke \
-  --input-json '{"message":"hello workflow"}'
+relaymux workflow run ./workflow.ts \
+  --name quality-gate \
+  --input-json '{"repo":"."}'
 ```
 
 Inspect it later:
